@@ -98,6 +98,8 @@ Live React Flow visualization of VANTIS's mind:
 - **Skill nodes** (purple): built-in and self-generated capabilities
 - **System nodes** (pink): active personality version
 - All nodes editable and deletable via the UI (admin)
+- Right-click any node for context menu: View, Edit, Execute (skills), Delete
+- Click any node to open a slide-in detail panel with full content, inline editing, and conversation replay
 - Edges auto-generated via semantic similarity
 - Filters by node type, live updates via WebSocket
 
@@ -131,6 +133,9 @@ Docker-first: `python:3.11-slim`, network disabled, 256 MB memory limit, 60-seco
 ### Personality Evolution
 Every 24 hours, VANTIS reviews its last 1000 thoughts and proposes a personality evolution. Admin can apply or reject. Each version is stored with a diff and full config snapshot. Fully editable via Admin > Personality. Complexity only ever increases.
 
+### In-App Updates
+Admin > Update shows the current version, checks GitHub releases for a newer version, displays release notes, and applies the update in one click. The update runs in the background (git pull + pip install + npm build + systemctl restart), streaming live log output to the browser.
+
 ### User Roles
 - `administrator` (Creator): full access, all pages, personality/user/network/skills management
 - `user`: chat access, read-only brain view, goals view
@@ -150,6 +155,7 @@ Every 24 hours, VANTIS reviews its last 1000 thoughts and proposes a personality
 | Admin / Network | Admin | Local network scan, hardware report |
 | Admin / Personality | Admin | Edit system prompt, tone, trigger evolution |
 | Admin / Users | Admin | User management, password reset |
+| Admin / Update | Admin | Check for updates, apply in one click, live log stream |
 
 ---
 
@@ -200,6 +206,10 @@ GET  /api/admin/stats             # System statistics
 GET  /api/sandbox/results         # Sandbox history
 POST /api/sandbox/execute         # Run code (admin)
 
+GET  /api/admin/update/check      # Check for new release on GitHub
+POST /api/admin/update/apply      # Apply update (git pull + rebuild + restart)
+GET  /api/admin/update/status     # Poll update progress and log
+
 WS   /ws?token={jwt}              # Real-time brain state
 ```
 
@@ -231,8 +241,8 @@ AI_NAME                 Display name (default: VANTIS)
 SELF_DIALOGUE_INTERVAL  Seconds between thoughts (default: 30)
 EVOLUTION_INTERVAL_HOURS Hours between evolution checks (default: 24)
 SANDBOX_TIMEOUT         Execution timeout in seconds (default: 60)
-TLS_CERT_PATH           TLS certificate path
-TLS_KEY_PATH            TLS private key path
+TLS_CERT_PATH           TLS certificate path (default: {project_root}/certs/cert.pem)
+TLS_KEY_PATH            TLS private key path (default: {project_root}/certs/key.pem)
 ```
 
 ---
