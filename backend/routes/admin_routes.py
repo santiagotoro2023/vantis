@@ -193,3 +193,21 @@ async def get_stats(user: dict = Depends(require_admin)):
         "counts": counts,
         "websocket_connections": __import__("websocket_manager").ws_manager.active_count(),
     }
+
+
+# ---------------------------------------------------------------------------
+# Network
+# ---------------------------------------------------------------------------
+
+@router.get("/network/scan")
+async def get_network_scan(user: dict = Depends(require_admin)):
+    from network import network_mapper
+    hosts = await network_mapper.scan_local_network()
+    hw = await network_mapper.hardware_report()
+    return {"hosts": hosts, "hardware": hw, "host_count": len(hosts)}
+
+
+@router.get("/network/hardware")
+async def get_hardware(user: dict = Depends(require_admin)):
+    from network import network_mapper
+    return await network_mapper.hardware_report()

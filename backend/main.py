@@ -14,6 +14,7 @@ from auth import decode_token, seed_creator_account
 from config import settings
 from consciousness import consciousness
 from database import init_db
+from skills import skill_manager
 from websocket_manager import ws_manager
 
 from routes.auth_routes import router as auth_router
@@ -22,6 +23,7 @@ from routes.brain_routes import router as brain_router
 from routes.goals_routes import router as goals_router
 from routes.admin_routes import router as admin_router
 from routes.sandbox_routes import router as sandbox_router
+from routes.skills_routes import router as skills_router
 
 logging.basicConfig(
     level=logging.INFO,
@@ -84,6 +86,9 @@ async def lifespan(app: FastAPI):
     await init_db()
     await seed_creator_account()
 
+    # Initialise built-in skills
+    await skill_manager.init_builtin_skills()
+
     # Wire broadcast callable into consciousness loop
     consciousness.websocket_broadcast = ws_manager.broadcast
 
@@ -119,6 +124,7 @@ app.include_router(brain_router)
 app.include_router(goals_router)
 app.include_router(admin_router)
 app.include_router(sandbox_router)
+app.include_router(skills_router)
 
 
 # ---------------------------------------------------------------------------

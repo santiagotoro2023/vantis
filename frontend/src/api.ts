@@ -101,4 +101,15 @@ export const api = {
     request(`/sandbox/results?limit=${limit}&offset=${offset}`),
   executeSandbox: (code: string, language = 'python', query?: string) =>
     request('/sandbox/execute', { method: 'POST', body: JSON.stringify({ code, language, query }) }),
+
+  // Skills
+  getSkills: () => request<unknown[]>('/skills'),
+  getSkill: (id: number) => request(`/skills/${id}`),
+  createSkill: (name: string, description: string, code: string, trigger_conditions = '') =>
+    request('/skills', { method: 'POST', body: JSON.stringify({ name, description, code, trigger_conditions }) }),
+  updateSkill: (id: number, data: Record<string, unknown>) =>
+    request(`/skills/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+  deleteSkill: (id: number) => request(`/skills/${id}`, { method: 'DELETE' }),
+  executeSkill: (id: number, args: string[] = []) =>
+    request(`/skills/${id}/execute`, { method: 'POST', body: JSON.stringify({ args }) }),
 }

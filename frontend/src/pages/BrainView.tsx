@@ -68,9 +68,42 @@ function GoalNode({ data }: NodeProps) {
   )
 }
 
-const nodeTypes = { thoughtNode: ThoughtNode, memoryNode: MemoryNode, goalNode: GoalNode }
+function SkillNode({ data }: NodeProps) {
+  const d = data as Record<string, unknown>
+  return (
+    <div className={`bg-surface border rounded-lg p-3 max-w-48 shadow-lg border-purple-500/50 shadow-purple-500/10 ${!d.enabled ? 'opacity-50' : ''}`}>
+      <Handle type="target" position={Position.Top} className="!bg-purple-500" />
+      <div className="text-xs text-purple-400 font-mono mb-1">
+        {d.is_builtin ? 'SKILL:BUILTIN' : 'SKILL:CUSTOM'}
+      </div>
+      <div className="text-xs text-text leading-relaxed">{d.label as string}</div>
+      <div className="text-xs text-muted mt-1">{d.use_count as number}x used</div>
+      <Handle type="source" position={Position.Bottom} className="!bg-purple-500" />
+    </div>
+  )
+}
 
-const FILTERS = ['all', 'thought', 'memory', 'goal'] as const
+function SystemNode({ data }: NodeProps) {
+  const d = data as Record<string, unknown>
+  return (
+    <div className="bg-surface border border-pink-500/50 rounded-lg p-3 max-w-48 shadow-lg shadow-pink-500/10">
+      <Handle type="target" position={Position.Top} className="!bg-pink-500" />
+      <div className="text-xs text-pink-400 font-mono mb-1">SYSTEM</div>
+      <div className="text-xs text-text leading-relaxed">{d.label as string}</div>
+      <Handle type="source" position={Position.Bottom} className="!bg-pink-500" />
+    </div>
+  )
+}
+
+const nodeTypes = {
+  thoughtNode: ThoughtNode,
+  memoryNode: MemoryNode,
+  goalNode: GoalNode,
+  skillNode: SkillNode,
+  systemNode: SystemNode,
+}
+
+const FILTERS = ['all', 'thought', 'memory', 'goal', 'skill', 'system'] as const
 type Filter = typeof FILTERS[number]
 
 function applyFilter(nodes: Node[], filter: Filter): Node[] {
@@ -184,6 +217,8 @@ export default function BrainView() {
               { color: 'bg-thought', label: 'Thought' },
               { color: 'bg-memory', label: 'Memory' },
               { color: 'bg-goal', label: 'Goal' },
+              { color: 'bg-purple-500', label: 'Skill' },
+              { color: 'bg-pink-500', label: 'System' },
             ].map(({ color, label }) => (
               <div key={label} className="flex items-center gap-2 mb-1">
                 <div className={`w-2 h-2 rounded-full ${color}`} />

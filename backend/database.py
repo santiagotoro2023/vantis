@@ -168,3 +168,26 @@ async def get_db() -> AsyncGenerator[aiosqlite.Connection, None]:
         await db.execute("PRAGMA foreign_keys=ON")
         db.row_factory = aiosqlite.Row
         yield db
+
+
+async def ensure_skills_table() -> None:
+    """Add skills table if missing (migration-safe)."""
+    async with aiosqlite.connect(settings.DB_PATH) as db:
+        await db.execute("PRAGMA journal_mode=WAL")
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS skills (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL UNIQUE,
+                description TEXT NOT NULL,
+                code TEXT NOT NULL,
+                trigger_conditions TEXT,
+                is_builtin INTEGER NOT NULL DEFAULT 0,
+                enabled INTEGER NOT NULL DEFAULT 1,
+                created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                last_used TEXT,
+                use_count INTEGER NOT NULL DEFAULT 0,
+                last_result TEXT,
+                author TEXT DEFAULT 'vantis'
+            )
+        """)
+        await db.commit()

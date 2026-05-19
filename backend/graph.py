@@ -8,6 +8,8 @@ NODE_COLORS = {
     "thought": "#6366f1",
     "memory": "#10b981",
     "goal": "#f59e0b",
+    "skill": "#a855f7",
+    "system": "#ec4899",
     "conversation": "#3b82f6",
     "agent": "#ec4899",
     "self_conversation": "#8b5cf6",
@@ -110,6 +112,55 @@ class GraphManager:
                     },
                     "position": {"x": 0, "y": 0},
                 })
+
+            # Skills (if table exists)
+            try:
+                cursor = await db.execute(
+                    "SELECT id, name, description, is_builtin, enabled, use_count, last_used "
+                    "FROM skills ORDER BY use_count DESC LIMIT 50"
+                )
+                for r in await cursor.fetchall():
+                    nodes.append({
+                        "id": f"skill_{r['id']}",
+                        "type": "skillNode",
+                        "data": {
+                            "nodeType": "skill",
+                            "dbId": r["id"],
+                            "label": r["name"],
+                            "content": r["description"],
+                            "is_builtin": bool(r["is_builtin"]),
+                            "enabled": bool(r["enabled"]),
+                            "use_count": r["use_count"],
+                            "last_used": r["last_used"],
+                            "color": NODE_COLORS["skill"],
+                        },
+                        "position": {"x": 0, "y": 0},
+                    })
+            except Exception:
+                pass
+
+            # System nodes: personality, emotion, running agents
+            try:
+                cursor = await db.execute(
+                    "SELECT id, version, created_at FROM personality_versions ORDER BY version DESC LIMIT 1"
+                )
+                pv = await cursor.fetchone()
+                if pv:
+                    nodes.append({
+                        "id": "system_personality",
+                        "type": "systemNode",
+                        "data": {
+                            "nodeType": "system",
+                            "dbId": pv["id"],
+                            "label": f"Personality v{pv['version']}",
+                            "content": f"Active personality version {pv['version']}",
+                            "sub_type": "personality",
+                            "color": NODE_COLORS["system"],
+                        },
+                        "position": {"x": 0, "y": 0},
+                    })
+            except Exception:
+                pass
 
             # Graph edges
             cursor = await db.execute("SELECT * FROM graph_edges")

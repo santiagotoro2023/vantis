@@ -1,5 +1,5 @@
 import { Link, useLocation, useNavigate } from 'react-router-dom'
-import { Brain, MessageSquare, Target, Settings, Users, Terminal, Activity, LogOut } from 'lucide-react'
+import { Brain, MessageSquare, Target, Settings, Users, Terminal, Activity, LogOut, Wifi, Zap } from 'lucide-react'
 import clsx from 'clsx'
 
 interface Props {
@@ -13,10 +13,12 @@ const NAV = [
   { to: '/chat', icon: MessageSquare, label: 'Chat' },
   { to: '/monologue', icon: Activity, label: 'Monologue' },
   { to: '/goals', icon: Target, label: 'Goals' },
+  { to: '/skills', icon: Zap, label: 'Skills' },
   { to: '/sandbox', icon: Terminal, label: 'Sandbox' },
 ]
 
 const ADMIN_NAV = [
+  { to: '/admin/network', icon: Wifi, label: 'Network' },
   { to: '/admin/personality', icon: Settings, label: 'Personality' },
   { to: '/admin/users', icon: Users, label: 'Users' },
 ]

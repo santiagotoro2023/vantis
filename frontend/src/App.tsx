@@ -8,6 +8,8 @@ import Goals from './pages/Goals'
 import SandboxHistory from './pages/SandboxHistory'
 import PersonalityConfig from './pages/PersonalityConfig'
 import UserManagement from './pages/UserManagement'
+import NetworkView from './pages/NetworkView'
+import SkillsView from './pages/SkillsView'
 import { useWebSocket } from './hooks/useWebSocket'
 import type { WsMessage } from './types'
 import Layout from './components/Layout'
@@ -38,8 +40,10 @@ function ProtectedApp() {
         <Route path="/monologue" element={<SelfDialogue />} />
         <Route path="/goals" element={<Goals />} />
         <Route path="/sandbox" element={<SandboxHistory />} />
+        <Route path="/admin/network" element={<NetworkView />} />
         <Route path="/admin/personality" element={<PersonalityConfig />} />
         <Route path="/admin/users" element={<UserManagement />} />
+        <Route path="/skills" element={<SkillsView />} />
         <Route path="*" element={<Navigate to="/brain" replace />} />
       </Routes>
     </Layout>
