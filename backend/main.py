@@ -24,6 +24,7 @@ from routes.goals_routes import router as goals_router
 from routes.admin_routes import router as admin_router
 from routes.sandbox_routes import router as sandbox_router
 from routes.skills_routes import router as skills_router
+from routes.update_routes import router as update_router
 
 logging.basicConfig(
     level=logging.INFO,
@@ -125,6 +126,7 @@ app.include_router(goals_router)
 app.include_router(admin_router)
 app.include_router(sandbox_router)
 app.include_router(skills_router)
+app.include_router(update_router)
 
 
 # ---------------------------------------------------------------------------

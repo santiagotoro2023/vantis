@@ -1,5 +1,5 @@
 import { Link, useLocation, useNavigate } from 'react-router-dom'
-import { Brain, MessageSquare, Target, Settings, Users, Terminal, Activity, LogOut, Wifi, Zap } from 'lucide-react'
+import { Brain, MessageSquare, Target, Settings, Users, Terminal, Activity, LogOut, Wifi, Zap, Download } from 'lucide-react'
 import clsx from 'clsx'
 import VantisLogo from './VantisLogo'
 
@@ -22,6 +22,7 @@ const ADMIN_NAV = [
   { to: '/admin/network', icon: Wifi, label: 'Network' },
   { to: '/admin/personality', icon: Settings, label: 'Personality' },
   { to: '/admin/users', icon: Users, label: 'Users' },
+  { to: '/admin/update', icon: Download, label: 'Update' },
 ]
 
 export default function Layout({ children, role, notification }: Props) {

@@ -102,6 +102,20 @@ export const api = {
   executeSandbox: (code: string, language = 'python', query?: string) =>
     request('/sandbox/execute', { method: 'POST', body: JSON.stringify({ code, language, query }) }),
 
+  // Brain node mutations
+  deleteNode: (type: string, id: number) =>
+    request(`/brain/node/${type}/${id}`, { method: 'DELETE' }),
+  updateNode: (type: string, id: number, content: string) =>
+    request(`/brain/node/${type}/${id}`, { method: 'PUT', body: JSON.stringify({ content }) }),
+  getGoal: (_id: number) => request('/goals'),
+  updateGoalFull: (id: number, data: Record<string, unknown>) =>
+    request(`/goals/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+
+  // Update
+  checkUpdate: () => request<{ current_version: string; latest_version: string; update_available: boolean; release_notes: string; release_url: string }>('/admin/update/check'),
+  applyUpdate: () => request('/admin/update/apply', { method: 'POST' }),
+  getUpdateStatus: () => request<{ running: boolean; log: string; result: string | null }>('/admin/update/status'),
+
   // Skills
   getSkills: () => request<unknown[]>('/skills'),
   getSkill: (id: number) => request(`/skills/${id}`),
