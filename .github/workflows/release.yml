@@ -4,6 +4,7 @@ on:
   push:
     branches: [main]
     paths: [VERSION]
+  workflow_dispatch:
 
 jobs:
   release:
@@ -58,10 +59,4 @@ jobs:
 
 \`\`\`bash
 curl -fsSL https://raw.githubusercontent.com/santiagotoro2023/vantis/main/install.sh | bash
-\`\`\`
-
-### Requirements
-- Debian/Ubuntu Linux
-- NVIDIA GPU (tested: RTX 3060 Ti + Quadro P2000)
-- Ollama with qwen2.5:14b-instruct-q4_K_M loaded
-- Python 3.11+, Node.js 18+"
+\`\`\`"
