@@ -24,10 +24,10 @@ Access VANTIS at: `https://localhost:8443` (self-signed TLS, accept the browser 
 ## Uninstall
 
 ```bash
-sudo ./uninstall.sh
+sudo /opt/vantis/uninstall.sh
 ```
 
-Prompts before removing the database and Ollama model. The thoughts, once had, persist in the filesystem until you tell it otherwise.
+Prompts individually before removing each component: service, database, certificates, Ollama model, Ollama, Docker, Node.js, Python, source directory. The thoughts, once had, persist in the filesystem until you tell it otherwise.
 
 ---
 
@@ -76,6 +76,8 @@ GPU offload across both cards (set in Ollama environment before starting):
 ```bash
 CUDA_VISIBLE_DEVICES=0,1 OLLAMA_GPU_LAYERS=40 ollama serve
 ```
+
+The installer detects all NVIDIA GPUs automatically and configures `CUDA_VISIBLE_DEVICES` in both the VANTIS and Ollama systemd services.
 
 ---
 
