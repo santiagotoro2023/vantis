@@ -243,6 +243,9 @@ systemctl enable ${SERVICE_NAME}
 systemctl start ${SERVICE_NAME}
 success "VANTIS service started."
 
+# Ensure both scripts are executable
+chmod +x "$VANTIS_DIR/install.sh" "$VANTIS_DIR/uninstall.sh" 2>/dev/null || true
+
 # ---------------------------------------------------------------------------
 # Done
 # ---------------------------------------------------------------------------
