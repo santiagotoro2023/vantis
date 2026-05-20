@@ -146,6 +146,25 @@ async def update_node(
     return {"status": "Updated."}
 
 
+@router.get("/node/{node_type}/{node_id}/connections")
+async def get_node_connections(
+    node_type: str,
+    node_id: int,
+    user: dict = Depends(get_current_user),
+):
+    """Return edges connecting to/from a specific node."""
+    async with get_db() as db:
+        cursor = await db.execute(
+            "SELECT source_type, source_id, target_type, target_id, label, weight "
+            "FROM graph_edges "
+            "WHERE (source_type = ? AND source_id = ?) OR (target_type = ? AND target_id = ?) "
+            "LIMIT 50",
+            (node_type, node_id, node_type, node_id),
+        )
+        rows = await cursor.fetchall()
+    return [dict(r) for r in rows]
+
+
 @router.get("/search")
 async def search_brain_nodes(
     q: str = "",

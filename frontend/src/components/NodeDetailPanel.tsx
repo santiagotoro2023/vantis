@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { X, Check, XCircle, Play, ExternalLink, ChevronRight } from 'lucide-react'
+import { X, Check, XCircle, Play, ExternalLink, ChevronRight, GitBranch } from 'lucide-react'
 import { api } from '../api'
 import type { EmotionState, ConversationMessage } from '../types'
 
@@ -681,6 +681,61 @@ function ConversationPanel({ data }: { data: Record<string, unknown> }) {
   )
 }
 
+// ---- connections panel ----
+
+interface Connection {
+  source_type: string
+  source_id: number
+  target_type: string
+  target_id: number
+  label: string
+  weight: number
+}
+
+function ConnectionsPanel({ nodeType, dbId }: { nodeType: string; dbId: number }) {
+  const [connections, setConnections] = useState<Connection[]>([])
+  const [loading, setLoading] = useState(true)
+
+  useEffect(() => {
+    setLoading(true)
+    api.getNodeConnections(nodeType, dbId)
+      .then(data => setConnections(data as Connection[]))
+      .catch(() => setConnections([]))
+      .finally(() => setLoading(false))
+  }, [nodeType, dbId])
+
+  if (loading) {
+    return (
+      <div className="text-[9px] font-mono text-muted/50 animate-pulse py-2">LOADING CONNECTIONS...</div>
+    )
+  }
+
+  if (connections.length === 0) {
+    return (
+      <div className="text-[9px] font-mono text-muted/40 py-2">No connections recorded.</div>
+    )
+  }
+
+  return (
+    <div className="space-y-1.5">
+      {connections.map((c, i) => {
+        const isSource = c.source_type === nodeType && c.source_id === dbId
+        const otherType = isSource ? c.target_type : c.source_type
+        const otherId = isSource ? c.target_id : c.source_id
+        return (
+          <div key={i} className="flex items-start gap-1.5 text-[10px] font-mono">
+            <span className="text-muted/50 shrink-0 mt-0.5">{isSource ? '→' : '←'}</span>
+            <span className="text-accent/80 shrink-0">{c.label || 'linked'}</span>
+            <span className="text-muted shrink-0">→</span>
+            <span className="text-muted">{otherType}</span>
+            <span className="text-muted/50">#{otherId}</span>
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
 // ---- Main panel ----
 
 export default function NodeDetailPanel({
@@ -811,6 +866,17 @@ export default function NodeDetailPanel({
           )}
           {node && nodeType === 'conversation' && (
             <ConversationPanel data={node.data} />
+          )}
+          {/* Connections section for all node types with a dbId */}
+          {node && dbId && nodeType && !['system', 'conversation'].includes(nodeType) && (
+            <div className="mt-5">
+              <div className="flex items-center gap-2 mb-3">
+                <GitBranch size={10} className="text-accent shrink-0" />
+                <span className="text-[9px] font-mono text-muted tracking-[0.15em] uppercase">Connections</span>
+                <div className="flex-1 h-px bg-accent/20" />
+              </div>
+              <ConnectionsPanel nodeType={nodeType} dbId={dbId} />
+            </div>
           )}
         </div>
 

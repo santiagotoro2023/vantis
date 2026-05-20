@@ -53,7 +53,13 @@ export const api = {
     request<Array<{ role: string; content: string; timestamp: string }>>(`/chat/history/${sessionId}`),
 
   getChatSessions: () =>
-    request<Array<{ session_id: string; started: string; message_count: number }>>('/chat/sessions'),
+    request<Array<{ session_id: string; started: string; message_count: number; name?: string }>>('/chat/sessions'),
+
+  renameSession: (sessionId: string, name: string) =>
+    request(`/chat/sessions/${sessionId}/name`, { method: 'PUT', body: JSON.stringify({ name }) }),
+
+  searchSessions: (query: string) =>
+    request<Array<{ session_id: string; name?: string; started: string; message_count: number; snippet?: string }>>(`/chat/sessions/search?q=${encodeURIComponent(query)}`),
 
   endSession: () => request('/chat/end-session', { method: 'POST' }),
 
@@ -66,6 +72,15 @@ export const api = {
   getSelfDialogue: (limit = 50, offset = 0) =>
     request(`/brain/self-dialogue?limit=${limit}&offset=${offset}`),
   getEmotions: () => request<Record<string, number>>('/brain/emotions'),
+
+  getBrainSummary: () =>
+    request<{ thought_count: number; memory_count: number; active_goals: number }>('/brain/summary'),
+
+  searchBrainNodes: (query: string) =>
+    request<Array<{ id: string; type: string; label: string }>>(`/brain/search?q=${encodeURIComponent(query)}`),
+
+  getNodeConnections: (nodeType: string, nodeId: number) =>
+    request<Array<{ source_type: string; source_id: number; target_type: string; target_id: number; label: string; weight: number }>>(`/brain/node/${nodeType}/${nodeId}/connections`),
 
   // Goals
   getGoals: () => request<unknown[]>('/goals'),

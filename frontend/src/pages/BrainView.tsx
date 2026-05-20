@@ -14,7 +14,7 @@ import {
   ReactFlowInstance,
 } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
-import { RefreshCw, Filter, Wifi, WifiOff, LayoutGrid, Circle } from 'lucide-react'
+import { RefreshCw, Filter, Wifi, WifiOff, LayoutGrid, Circle, Search } from 'lucide-react'
 import { api } from '../api'
 import { useWebSocket } from '../hooks/useWebSocket'
 import EmotionBar from '../components/EmotionBar'
@@ -99,6 +99,7 @@ function layoutNodes(nodes: Node[]): Node[] {
 function ThoughtNode({ data, selected }: NodeProps) {
   const d = data as Record<string, unknown>
   const isWriting = d.isWriting as boolean | undefined
+  const highlighted = d.highlighted as boolean | undefined
   const ttype = (d.thought_type as string) || 'transient'
   const emotions = parseEmotions(d.emotion_state)
 
@@ -111,11 +112,11 @@ function ThoughtNode({ data, selected }: NodeProps) {
 
   return (
     <div
-      className={`bg-surface border rounded-none p-3 shadow-lg transition-transform hover:scale-[1.02] cursor-pointer
+      className={`bg-surface border rounded-lg p-3 shadow-lg transition-transform hover:scale-[1.02] cursor-pointer
         ${isWriting ? 'border-accent animate-[vantis-writing_1.2s_ease-in-out_infinite]' : 'border-thought/40'}
         ${selected ? 'border-l-2 border-l-accent' : ''}
       `}
-      style={{ width: 180, boxShadow: selected ? '0 0 0 1px rgba(245,158,11,0.3)' : undefined }}
+      style={{ width: 180, boxShadow: highlighted ? '0 0 0 2px #f59e0b' : selected ? '0 0 0 1px rgba(245,158,11,0.3)' : undefined }}
     >
       <Handle type="target" position={Position.Top} className="!bg-thought !border-thought/60 !w-1.5 !h-1.5" />
       <div className="flex items-center justify-between mb-1.5">
@@ -145,6 +146,7 @@ function ThoughtNode({ data, selected }: NodeProps) {
 
 function MemoryNode({ data, selected }: NodeProps) {
   const d = data as Record<string, unknown>
+  const highlighted = d.highlighted as boolean | undefined
   const emotions = parseEmotions(d.emotion_snapshot)
   const tags: string[] = (() => {
     if (!d.tags) return []
@@ -156,10 +158,10 @@ function MemoryNode({ data, selected }: NodeProps) {
 
   return (
     <div
-      className={`bg-surface border rounded-none p-3 shadow-lg transition-transform hover:scale-[1.02] cursor-pointer
+      className={`bg-surface border rounded-lg p-3 shadow-lg transition-transform hover:scale-[1.02] cursor-pointer
         border-memory/40 ${selected ? 'border-l-2 border-l-accent' : ''}
       `}
-      style={{ width: 180, boxShadow: selected ? '0 0 0 1px rgba(245,158,11,0.3)' : undefined }}
+      style={{ width: 180, boxShadow: highlighted ? '0 0 0 2px #f59e0b' : selected ? '0 0 0 1px rgba(245,158,11,0.3)' : undefined }}
     >
       <Handle type="target" position={Position.Top} className="!bg-memory !border-memory/60 !w-1.5 !h-1.5" />
       <div className="flex items-center justify-between mb-1.5">
@@ -192,6 +194,7 @@ function MemoryNode({ data, selected }: NodeProps) {
 
 function GoalNode({ data, selected }: NodeProps) {
   const d = data as Record<string, unknown>
+  const highlighted = d.highlighted as boolean | undefined
   const status = (d.status as string) || 'active'
   const progress = (d.progress as number) ?? 0
   const priority = (d.priority as number) || 5
@@ -202,10 +205,10 @@ function GoalNode({ data, selected }: NodeProps) {
 
   return (
     <div
-      className={`bg-surface border rounded-none p-3 shadow-lg transition-transform hover:scale-[1.02] cursor-pointer
+      className={`bg-surface border rounded-lg p-3 shadow-lg transition-transform hover:scale-[1.02] cursor-pointer
         ${borderCls} ${selected ? 'border-l-2 border-l-accent' : ''}
       `}
-      style={{ width: 180, boxShadow: selected ? '0 0 0 1px rgba(245,158,11,0.3)' : undefined }}
+      style={{ width: 180, boxShadow: highlighted ? '0 0 0 2px #f59e0b' : selected ? '0 0 0 1px rgba(245,158,11,0.3)' : undefined }}
     >
       <Handle type="target" position={Position.Top} className="!w-1.5 !h-1.5" />
       <div className="flex items-center justify-between mb-1.5">
@@ -236,13 +239,14 @@ function SkillNode({ data, selected }: NodeProps) {
   const d = data as Record<string, unknown>
   const enabled = d.enabled !== false
   const isBuiltin = d.is_builtin as boolean | undefined
+  const highlighted = d.highlighted as boolean | undefined
 
   return (
     <div
-      className={`bg-surface border rounded-none p-3 shadow-lg transition-transform hover:scale-[1.02] cursor-pointer
+      className={`bg-surface border rounded-lg p-3 shadow-lg transition-transform hover:scale-[1.02] cursor-pointer
         border-purple-500/40 ${!enabled ? 'opacity-40' : ''} ${selected ? 'border-l-2 border-l-accent' : ''}
       `}
-      style={{ width: 180, boxShadow: selected ? '0 0 0 1px rgba(245,158,11,0.3)' : undefined }}
+      style={{ width: 180, boxShadow: highlighted ? '0 0 0 2px #f59e0b' : selected ? '0 0 0 1px rgba(245,158,11,0.3)' : undefined }}
     >
       <Handle type="target" position={Position.Top} className="!bg-purple-500 !border-purple-500/60 !w-1.5 !h-1.5" />
       <div className="flex items-center justify-between mb-1.5">
@@ -261,12 +265,13 @@ function SkillNode({ data, selected }: NodeProps) {
 
 function SystemNode({ data, selected }: NodeProps) {
   const d = data as Record<string, unknown>
+  const highlighted = d.highlighted as boolean | undefined
   return (
     <div
-      className={`bg-surface border rounded-none p-3 shadow-lg transition-transform hover:scale-[1.02] cursor-pointer
+      className={`bg-surface border rounded-lg p-3 shadow-lg transition-transform hover:scale-[1.02] cursor-pointer
         border-pink-500/40 ${selected ? 'border-l-2 border-l-accent' : ''}
       `}
-      style={{ width: 180, boxShadow: selected ? '0 0 0 1px rgba(245,158,11,0.3)' : undefined }}
+      style={{ width: 180, boxShadow: highlighted ? '0 0 0 2px #f59e0b' : selected ? '0 0 0 1px rgba(245,158,11,0.3)' : undefined }}
     >
       <Handle type="target" position={Position.Top} className="!bg-pink-500 !border-pink-500/60 !w-1.5 !h-1.5" />
       <div className="flex items-center justify-between mb-1.5">
@@ -281,13 +286,14 @@ function SystemNode({ data, selected }: NodeProps) {
 
 function ConversationNode({ data, selected }: NodeProps) {
   const d = data as Record<string, unknown>
+  const highlighted = d.highlighted as boolean | undefined
   const sessionId = (d.session_id as string) || ''
   return (
     <div
-      className={`bg-surface border rounded-none p-3 shadow-lg transition-transform hover:scale-[1.02] cursor-pointer
+      className={`bg-surface border rounded-lg p-3 shadow-lg transition-transform hover:scale-[1.02] cursor-pointer
         border-blue-400/40 ${selected ? 'border-l-2 border-l-accent' : ''}
       `}
-      style={{ width: 180, boxShadow: selected ? '0 0 0 1px rgba(245,158,11,0.3)' : undefined }}
+      style={{ width: 180, boxShadow: highlighted ? '0 0 0 2px #f59e0b' : selected ? '0 0 0 1px rgba(245,158,11,0.3)' : undefined }}
     >
       <Handle type="target" position={Position.Top} className="!bg-blue-400 !border-blue-400/60 !w-1.5 !h-1.5" />
       <div className="flex items-center justify-between mb-1.5">
@@ -311,7 +317,7 @@ function WritingNode({ data }: NodeProps) {
   const emotions = parseEmotions(d.emotion_state)
   return (
     <div
-      className="bg-surface border rounded-none p-3 shadow-lg"
+      className="bg-surface border rounded-lg p-3 shadow-lg"
       style={{
         width: 180,
         animation: 'vantis-writing 1.2s ease-in-out infinite',
@@ -444,9 +450,38 @@ export default function BrainView() {
   const [writingNodeId, setWritingNodeId] = useState<string | null>(null)
   const [newNodeIds, setNewNodeIds] = useState<Set<string>>(new Set())
   const [compactMode, setCompactMode] = useState(false)
+  const [hiddenTypes, setHiddenTypes] = useState<Set<string>>(new Set())
+  const [brainStats, setBrainStats] = useState<{ thought_count: number; memory_count: number; active_goals: number } | null>(null)
+  const [searchQuery, setSearchQuery] = useState('')
+  const [highlightedIds, setHighlightedIds] = useState<Set<string>>(new Set())
+  const searchTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   const allNodesRef = useRef<Node[]>([])
   const rfInstanceRef = useRef<ReactFlowInstance<any, any> | null>(null)
+
+  const toggleType = (t: string) => setHiddenTypes(prev => {
+    const n = new Set(prev)
+    n.has(t) ? n.delete(t) : n.add(t)
+    return n
+  })
+
+  // Debounced semantic search
+  function handleSearchInput(q: string) {
+    setSearchQuery(q)
+    if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current)
+    if (!q.trim()) {
+      setHighlightedIds(new Set())
+      return
+    }
+    searchTimeoutRef.current = setTimeout(async () => {
+      try {
+        const results = await api.searchBrainNodes(q)
+        setHighlightedIds(new Set(results.map(r => r.id)))
+      } catch {
+        setHighlightedIds(new Set())
+      }
+    }, 400)
+  }
 
   // Derive isAdmin from token (simple check - any logged-in user with role)
   const isAdmin = (() => {
@@ -483,7 +518,10 @@ export default function BrainView() {
     }
   }, [filter, setNodes, setEdges])
 
-  useEffect(() => { loadGraph() }, [])
+  useEffect(() => {
+    loadGraph()
+    api.getBrainSummary().then(setBrainStats).catch(() => {})
+  }, [])
 
   useEffect(() => {
     setNodes(applyFilter(allNodesRef.current, filter))
@@ -620,6 +658,11 @@ export default function BrainView() {
 
   const counts = countByType(allNodesRef.current)
 
+  // Apply hidden type filter
+  const displayNodes = nodes.filter(n => !hiddenTypes.has((n.data?.nodeType as string) || ''))
+  const displayNodeIds = new Set(displayNodes.map(n => n.id))
+  const displayEdges = edges.filter(e => displayNodeIds.has(e.source) && displayNodeIds.has(e.target))
+
   function toCompact(nodeList: Node[]): Node[] {
     if (!compactMode) return nodeList
     return nodeList.map(n => ({
@@ -630,7 +673,7 @@ export default function BrainView() {
   }
 
   // Styled edges
-  const styledEdges = edges.map(e => ({
+  const styledEdges = displayEdges.map(e => ({
     ...e,
     style: {
       stroke: selectedNode && (e.source === selectedNode.id || e.target === selectedNode.id)
@@ -698,6 +741,21 @@ export default function BrainView() {
           ))}
         </div>
 
+        {/* Semantic search */}
+        <div className="flex items-center gap-1 bg-panel border border-border px-2 py-0.5 ml-2">
+          <Search size={10} className="text-muted/60 shrink-0" />
+          <input
+            type="text"
+            value={searchQuery}
+            onChange={e => handleSearchInput(e.target.value)}
+            placeholder="Search nodes..."
+            className="bg-transparent text-[10px] font-mono text-text placeholder-muted/40 outline-none w-28"
+          />
+          {highlightedIds.size > 0 && (
+            <span className="text-[9px] font-mono text-accent">{highlightedIds.size}</span>
+          )}
+        </div>
+
         <div className="ml-auto flex items-center gap-3">
           {/* Live indicator */}
           <div className="flex items-center gap-1.5">
@@ -734,13 +792,46 @@ export default function BrainView() {
         </div>
       </div>
 
+      {/* Node type visibility toggles */}
+      <div className="border-b border-border px-4 py-1.5 flex items-center gap-1 bg-surface shrink-0 overflow-x-auto">
+        <span className="text-[8px] font-mono text-muted/60 tracking-widest mr-1 shrink-0">VISIBLE:</span>
+        {(['thought', 'memory', 'goal', 'skill', 'system', 'conversation'] as const).map(t => {
+          const isHidden = hiddenTypes.has(t)
+          const typeColors: Record<string, string> = {
+            thought: 'text-thought border-thought/30',
+            memory: 'text-memory border-memory/30',
+            goal: 'text-accent border-accent/30',
+            skill: 'text-purple-400 border-purple-400/30',
+            system: 'text-pink-400 border-pink-400/30',
+            conversation: 'text-blue-400 border-blue-400/30',
+          }
+          return (
+            <button
+              key={t}
+              onClick={() => toggleType(t)}
+              className={`px-2 py-0.5 text-[9px] font-mono tracking-wider border transition-colors ${
+                isHidden
+                  ? 'text-muted/40 border-border/40 line-through'
+                  : typeColors[t]
+              }`}
+            >
+              {t.toUpperCase()}
+            </button>
+          )
+        })}
+      </div>
+
       <div className="flex flex-1 overflow-hidden">
         {/* Graph area */}
         <div className="flex-1 relative">
           <ReactFlow
-            nodes={toCompact(nodes).map(n => ({
+            nodes={toCompact(displayNodes).map(n => ({
               ...n,
               className: newNodeIds.has(n.id) ? 'node-new' : '',
+              data: {
+                ...(n.data as Record<string, unknown>),
+                highlighted: highlightedIds.size > 0 && highlightedIds.has(n.id),
+              },
             }))}
             edges={styledEdges}
             onNodesChange={onNodesChange}
@@ -823,10 +914,30 @@ export default function BrainView() {
                 </div>
                 <div className="flex justify-between">
                   <span>Visible</span>
-                  <span className="text-text/60">{nodes.length}</span>
+                  <span className="text-text/60">{displayNodes.length}</span>
                 </div>
               </div>
             </div>
+
+            {brainStats && (
+              <div className="mt-5">
+                <div className="text-[9px] font-mono text-muted tracking-[0.18em] mb-2">BRAIN</div>
+                <div className="space-y-1 text-[10px] font-mono text-muted">
+                  <div className="flex justify-between">
+                    <span>Thoughts</span>
+                    <span className="text-text/60">{brainStats.thought_count}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span>Memories</span>
+                    <span className="text-text/60">{brainStats.memory_count}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span>Active Goals</span>
+                    <span className="text-accent">{brainStats.active_goals}</span>
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
         </div>
       </div>

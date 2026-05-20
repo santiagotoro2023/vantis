@@ -2,6 +2,7 @@ import { Link, useLocation, useNavigate } from 'react-router-dom'
 import { Brain, MessageSquare, Target, Settings, Users, Terminal, Activity, LogOut, Wifi, Zap, Download } from 'lucide-react'
 import clsx from 'clsx'
 import VantisLogo from './VantisLogo'
+import NotificationHistory from './NotificationHistory'
 
 interface Props {
   children: React.ReactNode
@@ -100,7 +101,8 @@ export default function Layout({ children, role, notification }: Props) {
           </>
         )}
 
-        <div className="mt-auto">
+        <div className="mt-auto flex flex-col items-center">
+          <NotificationHistory />
           <button
             onClick={logout}
             title="Terminate session"

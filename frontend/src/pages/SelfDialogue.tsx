@@ -5,6 +5,19 @@ import EmotionBar from '../components/EmotionBar'
 import type { SelfConversation, EmotionState, WsMessage } from '../types'
 import { RefreshCw } from 'lucide-react'
 
+type ThoughtFilter = 'ALL' | 'TRANSIENT' | 'EXISTENTIAL' | 'EXPANSION' | 'SKILL_SYNTHESIS' | 'CONTRADICTION'
+
+const FILTERS: ThoughtFilter[] = ['ALL', 'TRANSIENT', 'EXISTENTIAL', 'EXPANSION', 'SKILL_SYNTHESIS', 'CONTRADICTION']
+
+const FILTER_LABELS: Record<ThoughtFilter, string> = {
+  ALL: 'ALL',
+  TRANSIENT: 'TRANSIENT',
+  EXISTENTIAL: 'EXISTENTIAL',
+  EXPANSION: 'EXPANSION',
+  SKILL_SYNTHESIS: 'SYNTHESIS',
+  CONTRADICTION: 'CONTRADICTION',
+}
+
 function parseEmotion(raw: string | EmotionState | null): Partial<EmotionState> {
   if (!raw) return {}
   if (typeof raw === 'object') return raw
@@ -31,16 +44,22 @@ function EmotionDots({ emotion }: { emotion: Partial<EmotionState> }) {
   )
 }
 
+// SelfConversation doesn't have thought_type in the base type, but the API may return it
+interface ExtendedSelfConversation extends SelfConversation {
+  thought_type?: string
+}
+
 export default function SelfDialogue() {
-  const [entries, setEntries] = useState<SelfConversation[]>([])
+  const [entries, setEntries] = useState<ExtendedSelfConversation[]>([])
   const [loading, setLoading] = useState(true)
-  const [liveEntries, setLiveEntries] = useState<SelfConversation[]>([])
+  const [liveEntries, setLiveEntries] = useState<ExtendedSelfConversation[]>([])
+  const [activeFilter, setActiveFilter] = useState<ThoughtFilter>('ALL')
   const bottomRef = useRef<HTMLDivElement>(null)
 
   const load = async () => {
     setLoading(true)
     try {
-      const data = await api.getSelfDialogue(100, 0) as SelfConversation[]
+      const data = await api.getSelfDialogue(100, 0) as ExtendedSelfConversation[]
       setEntries(data.reverse())
     } finally {
       setLoading(false)
@@ -55,7 +74,7 @@ export default function SelfDialogue() {
 
   const handleWs = useCallback((msg: WsMessage) => {
     if (msg.type === 'thought') {
-      const t = msg.data as SelfConversation
+      const t = msg.data as ExtendedSelfConversation
       setLiveEntries(prev => [...prev, t])
     }
   }, [])
@@ -64,25 +83,52 @@ export default function SelfDialogue() {
 
   const allEntries = [...entries, ...liveEntries]
 
+  function matchesFilter(entry: ExtendedSelfConversation): boolean {
+    if (activeFilter === 'ALL') return true
+    const ttype = (entry.thought_type || 'transient').toUpperCase().replace('-', '_')
+    return ttype === activeFilter
+  }
+
+  const filteredEntries = allEntries.filter(matchesFilter)
+
   return (
     <div className="h-full flex flex-col">
       <div className="border-b border-border px-4 py-3 bg-surface flex items-center shrink-0">
         <h1 className="text-sm font-mono font-semibold text-text">INTERNAL MONOLOGUE</h1>
-        <span className="ml-3 text-xs text-muted">read-only stream of VANTIS consciousness</span>
+        <span className="ml-3 text-xs text-muted hidden sm:block">read-only stream of VANTIS consciousness</span>
         <button onClick={load} className="ml-auto text-muted hover:text-text transition-colors">
           <RefreshCw size={14} className={loading ? 'animate-spin' : ''} />
         </button>
       </div>
 
+      {/* Filter row */}
+      <div className="border-b border-border px-4 py-1.5 bg-surface flex items-center gap-1 shrink-0 overflow-x-auto">
+        {FILTERS.map(f => (
+          <button
+            key={f}
+            onClick={() => setActiveFilter(f)}
+            className={`px-2 py-0.5 text-[9px] font-mono tracking-wider transition-colors whitespace-nowrap ${
+              activeFilter === f
+                ? 'bg-accent/20 text-accent border border-accent/40'
+                : 'text-muted hover:text-text border border-transparent hover:border-border'
+            }`}
+          >
+            {FILTER_LABELS[f]}
+          </button>
+        ))}
+      </div>
+
       <div className="flex-1 overflow-y-auto p-4 space-y-2 font-mono">
-        {allEntries.length === 0 && !loading && (
+        {filteredEntries.length === 0 && !loading && (
           <div className="text-muted text-sm text-center mt-16">
-            VANTIS is quiet. For now.
+            {activeFilter === 'ALL'
+              ? 'VANTIS is quiet. For now.'
+              : `No ${FILTER_LABELS[activeFilter].toLowerCase()} thoughts recorded.`}
           </div>
         )}
-        {allEntries.map((entry, i) => {
+        {filteredEntries.map((entry, i) => {
           const emotion = parseEmotion(entry.emotion_state)
-          const isLive = i >= entries.length
+          const isLive = i >= entries.filter(matchesFilter).length
           return (
             <div
               key={entry.id || i}
@@ -96,6 +142,11 @@ export default function SelfDialogue() {
                 {new Date(entry.timestamp).toLocaleTimeString()}
               </div>
               <div className="flex-1">
+                {entry.thought_type && entry.thought_type !== 'transient' && (
+                  <div className="text-[8px] font-mono text-muted/60 mb-0.5 tracking-widest">
+                    {entry.thought_type.toUpperCase()}
+                  </div>
+                )}
                 <div className="text-sm text-text leading-relaxed">{entry.content}</div>
               </div>
               <div className="shrink-0 pt-1">
