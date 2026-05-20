@@ -1,4 +1,6 @@
 import logging
+import math
+import struct
 from database import get_db
 from memory import memory_manager
 
@@ -22,6 +24,24 @@ GOAL_SHAPES = {
 }
 
 
+def _cosine_similarity(a: list[float], b: list[float]) -> float:
+    if not a or not b or len(a) != len(b):
+        return 0.0
+    dot = sum(x * y for x, y in zip(a, b))
+    na = math.sqrt(sum(x * x for x in a))
+    nb = math.sqrt(sum(y * y for y in b))
+    return dot / (na * nb) if na and nb else 0.0
+
+
+def _pack(emb: list[float]) -> bytes:
+    return struct.pack(f"{len(emb)}f", *emb)
+
+
+def _unpack(blob: bytes) -> list[float]:
+    n = len(blob) // 4
+    return list(struct.unpack(f"{n}f", blob)) if n else []
+
+
 class GraphManager:
 
     async def add_edge(
@@ -42,6 +62,23 @@ class GraphManager:
             )
             await db.commit()
             return cursor.lastrowid
+
+    async def _edge_exists(
+        self,
+        source_type: str,
+        source_id: int,
+        target_type: str,
+        target_id: int,
+    ) -> bool:
+        async with get_db() as db:
+            cursor = await db.execute(
+                "SELECT 1 FROM graph_edges WHERE "
+                "((source_type=? AND source_id=? AND target_type=? AND target_id=?) OR "
+                "(source_type=? AND source_id=? AND target_type=? AND target_id=?)) LIMIT 1",
+                (source_type, source_id, target_type, target_id,
+                 target_type, target_id, source_type, source_id),
+            )
+            return await cursor.fetchone() is not None
 
     async def get_graph_data(self) -> dict:
         nodes = []
@@ -139,7 +176,7 @@ class GraphManager:
             except Exception:
                 pass
 
-            # System nodes: personality, emotion, running agents
+            # System nodes: personality
             try:
                 cursor = await db.execute(
                     "SELECT id, version, created_at FROM personality_versions ORDER BY version DESC LIMIT 1"
@@ -179,19 +216,119 @@ class GraphManager:
         return {"nodes": nodes, "edges": edges}
 
     async def auto_link_thought(self, thought_id: int, thought_content: str) -> None:
-        related = await memory_manager.search_memories(
-            thought_content[:100], limit=3
-        )
-        for mem in related:
-            try:
-                await self.add_edge(
-                    "thought", thought_id,
-                    "memory", mem["id"],
-                    weight=0.6,
-                    label="recalls",
+        """Link a new thought to related memories using embedding similarity."""
+        from ollama_client import ollama
+        try:
+            emb = await ollama.embeddings(thought_content[:500])
+            if not emb:
+                return
+            # Fetch memories with stored embeddings
+            async with get_db() as db:
+                cursor = await db.execute(
+                    "SELECT id, embedding FROM memories WHERE embedding IS NOT NULL ORDER BY last_accessed DESC LIMIT 60"
                 )
-            except Exception as exc:
-                logger.debug("Auto-link failed: %s", exc)
+                rows = await cursor.fetchall()
+            linked = 0
+            for row in rows:
+                if linked >= 4:
+                    break
+                mem_emb = _unpack(row["embedding"])
+                sim = _cosine_similarity(emb, mem_emb)
+                if sim >= 0.62:
+                    if not await self._edge_exists("thought", thought_id, "memory", row["id"]):
+                        await self.add_edge("thought", thought_id, "memory", row["id"],
+                                            weight=round(sim, 3), label="recalls")
+                        linked += 1
+        except Exception as exc:
+            logger.debug("Embedding-based thought linking failed: %s", exc)
+            # Fall back to keyword matching
+            related = await memory_manager.search_memories(thought_content[:100], limit=3)
+            for mem in related:
+                try:
+                    if not await self._edge_exists("thought", thought_id, "memory", mem["id"]):
+                        await self.add_edge("thought", thought_id, "memory", mem["id"],
+                                            weight=0.6, label="recalls")
+                except Exception:
+                    pass
+
+    async def build_semantic_edges(self) -> int:
+        """
+        Periodically scan recent nodes and create edges between semantically
+        similar nodes that don't already have a connection.
+        Returns the number of new edges created.
+        """
+        from ollama_client import ollama
+        created = 0
+
+        try:
+            # Gather recent node content
+            async with get_db() as db:
+                t_cursor = await db.execute(
+                    "SELECT id, content FROM thoughts ORDER BY created_at DESC LIMIT 30"
+                )
+                thoughts = [{"type": "thought", "id": r["id"], "content": r["content"]}
+                            for r in await t_cursor.fetchall()]
+
+                m_cursor = await db.execute(
+                    "SELECT id, content, embedding FROM memories ORDER BY last_accessed DESC LIMIT 40"
+                )
+                memories_rows = await m_cursor.fetchall()
+
+                g_cursor = await db.execute(
+                    "SELECT id, description FROM goals WHERE status = 'active'"
+                )
+                goals = [{"type": "goal", "id": r["id"], "content": r["description"]}
+                         for r in await g_cursor.fetchall()]
+
+            # Build list of (type, id, content, embedding)
+            nodes_with_emb: list[tuple[str, int, list[float]]] = []
+
+            # Use pre-stored embeddings for memories, compute for the rest
+            for row in memories_rows:
+                if row["embedding"]:
+                    emb = _unpack(row["embedding"])
+                    if emb:
+                        nodes_with_emb.append(("memory", row["id"], emb))
+                else:
+                    emb = await ollama.embeddings(row["content"][:400])
+                    if emb:
+                        nodes_with_emb.append(("memory", row["id"], emb))
+                        # Store for future use
+                        async with get_db() as db:
+                            await db.execute(
+                                "UPDATE memories SET embedding = ? WHERE id = ?",
+                                (_pack(emb), row["id"]),
+                            )
+                            await db.commit()
+
+            for item in thoughts[:20] + goals:
+                emb = await ollama.embeddings(item["content"][:400])
+                if emb:
+                    nodes_with_emb.append((item["type"], item["id"], emb))
+
+            # Compare all pairs
+            n = len(nodes_with_emb)
+            for i in range(n):
+                for j in range(i + 1, n):
+                    type_a, id_a, emb_a = nodes_with_emb[i]
+                    type_b, id_b, emb_b = nodes_with_emb[j]
+                    # Skip same-type thought pairs (too noisy)
+                    if type_a == "thought" and type_b == "thought":
+                        continue
+                    sim = _cosine_similarity(emb_a, emb_b)
+                    if sim >= 0.70:
+                        if not await self._edge_exists(type_a, id_a, type_b, id_b):
+                            label = "similar" if type_a == type_b else "relates"
+                            await self.add_edge(type_a, id_a, type_b, id_b,
+                                                weight=round(sim, 3), label=label)
+                            created += 1
+
+        except Exception as exc:
+            logger.warning("build_semantic_edges failed: %s", exc)
+
+        if created:
+            logger.info("Built %d new semantic edges.", created)
+        return created
 
     async def delete_node(self, node_type: str, node_id: int) -> None:
         async with get_db() as db:

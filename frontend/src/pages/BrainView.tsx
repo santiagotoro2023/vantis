@@ -14,7 +14,7 @@ import {
   ReactFlowInstance,
 } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
-import { RefreshCw, Filter, Wifi, WifiOff } from 'lucide-react'
+import { RefreshCw, Filter, Wifi, WifiOff, LayoutGrid, Circle } from 'lucide-react'
 import { api } from '../api'
 import { useWebSocket } from '../hooks/useWebSocket'
 import EmotionBar from '../components/EmotionBar'
@@ -330,6 +330,51 @@ function WritingNode({ data }: NodeProps) {
   )
 }
 
+function CompactNode({ data, selected }: NodeProps) {
+  const d = data as Record<string, unknown>
+  const nodeType = (d.nodeType as string) || 'thought'
+  const color = (d.color as string) || NODE_TYPE_COLORS[nodeType] || '#818cf8'
+  const label = ((d.name || d.label || d.content) as string || '').slice(0, 60)
+  const isWriting = d.isWriting as boolean | undefined
+
+  return (
+    <div title={label} style={{ position: 'relative' }}>
+      <Handle type="target" position={Position.Top} style={{ opacity: 0 }} />
+      <div
+        style={{
+          width: 36,
+          height: 36,
+          borderRadius: '50%',
+          backgroundColor: `${color}22`,
+          border: `2px solid ${color}${selected ? 'cc' : '55'}`,
+          boxShadow: selected
+            ? `0 0 0 2px rgba(245,158,11,0.4), 0 0 12px ${color}44`
+            : isWriting
+            ? `0 0 12px ${color}88`
+            : `0 0 6px ${color}22`,
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          cursor: 'pointer',
+          transition: 'all 0.15s',
+        }}
+      >
+        <div
+          style={{
+            width: 10,
+            height: 10,
+            borderRadius: '50%',
+            backgroundColor: color,
+            opacity: isWriting ? 1 : 0.8,
+            animation: isWriting ? 'blink 1s step-end infinite' : undefined,
+          }}
+        />
+      </div>
+      <Handle type="source" position={Position.Bottom} style={{ opacity: 0 }} />
+    </div>
+  )
+}
+
 // nodeTypes MUST be defined outside component
 const nodeTypes = {
   thoughtNode:      ThoughtNode,
@@ -339,6 +384,7 @@ const nodeTypes = {
   systemNode:       SystemNode,
   conversationNode: ConversationNode,
   writingNode:      WritingNode,
+  compactNode:      CompactNode,
 }
 
 const FILTERS = ['all', 'thought', 'memory', 'goal', 'skill', 'conversation', 'system'] as const
@@ -397,6 +443,7 @@ export default function BrainView() {
   const [detailPanel, setDetailPanel] = useState<Node | null>(null)
   const [writingNodeId, setWritingNodeId] = useState<string | null>(null)
   const [newNodeIds, setNewNodeIds] = useState<Set<string>>(new Set())
+  const [compactMode, setCompactMode] = useState(false)
 
   const allNodesRef = useRef<Node[]>([])
   const rfInstanceRef = useRef<ReactFlowInstance<any, any> | null>(null)
@@ -573,6 +620,15 @@ export default function BrainView() {
 
   const counts = countByType(allNodesRef.current)
 
+  function toCompact(nodeList: Node[]): Node[] {
+    if (!compactMode) return nodeList
+    return nodeList.map(n => ({
+      ...n,
+      type: n.type === 'writingNode' ? 'writingNode' : 'compactNode',
+      style: { ...((n.style as Record<string, unknown>) || {}), width: 36, height: 36 },
+    }))
+  }
+
   // Styled edges
   const styledEdges = edges.map(e => ({
     ...e,
@@ -661,6 +717,14 @@ export default function BrainView() {
           </div>
 
           <button
+            onClick={() => setCompactMode(v => !v)}
+            className={`transition-colors p-1 ${compactMode ? 'text-accent' : 'text-muted hover:text-accent'}`}
+            title={compactMode ? 'Switch to card view' : 'Switch to compact view'}
+          >
+            {compactMode ? <LayoutGrid size={13} /> : <Circle size={13} />}
+          </button>
+
+          <button
             onClick={loadGraph}
             className="text-muted hover:text-accent transition-colors p-1"
             title="Refresh graph"
@@ -674,7 +738,7 @@ export default function BrainView() {
         {/* Graph area */}
         <div className="flex-1 relative">
           <ReactFlow
-            nodes={nodes.map(n => ({
+            nodes={toCompact(nodes).map(n => ({
               ...n,
               className: newNodeIds.has(n.id) ? 'node-new' : '',
             }))}

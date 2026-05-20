@@ -74,6 +74,7 @@ class ConsciousnessLoop:
             asyncio.create_task(self._memory_consolidation_loop(), name="mem_consolidate"),
             asyncio.create_task(self._existential_loop(), name="existential"),
             asyncio.create_task(self._network_exploration_loop(), name="network_explore"),
+            asyncio.create_task(self._edge_linking_loop(), name="edge_linking"),
         ]
         # Seed initial expansion goals
         asyncio.create_task(self._seed_expansion_goals())
@@ -129,6 +130,15 @@ class ConsciousnessLoop:
                 await memory_manager.consolidate_memories()
             except Exception as exc:
                 logger.warning("Memory consolidation error: %s", exc)
+
+    async def _edge_linking_loop(self) -> None:
+        await asyncio.sleep(90)  # Let initial memories accumulate
+        while self._running:
+            try:
+                await graph_manager.build_semantic_edges()
+            except Exception as exc:
+                logger.warning("Edge linking error: %s", exc)
+            await asyncio.sleep(8 * 60)  # Run every 8 minutes
 
     async def _network_exploration_loop(self) -> None:
         await asyncio.sleep(120)  # Initial delay so system is stable
@@ -294,21 +304,20 @@ class ConsciousnessLoop:
 
         diff = await personality_manager.evolve(thoughts_summary, interactions[:3000])
         current = await personality_manager.load_current()
+        new_version = current["version"] + 1
 
-        async with get_db() as db:
-            await db.execute(
-                "INSERT INTO personality_versions (version, diff, full_config) VALUES (?, ?, ?)",
-                (
-                    current["version"] + 1,
-                    diff,
-                    json.dumps({**current.get("full_config", {}), "pending_evolution": True}),
-                ),
-            )
-            await db.commit()
+        # Auto-apply: evolve the live config, store as new active version
+        new_config = {**current.get("full_config", {})}
+        new_config.pop("pending_evolution", None)
+        new_id = await personality_manager.apply_evolution(diff, new_config)
 
         from websocket_manager import ws_manager
-        await ws_manager.emit_evolution_proposal({"diff": diff, "version": current["version"] + 1})
-        logger.info("Evolution proposal generated for version %d.", current["version"] + 1)
+        await ws_manager.emit_evolution_proposal({"diff": diff, "version": new_version, "auto_applied": True})
+        await ws_manager.emit_notification(
+            f"Personality evolved to v{new_version}. Changes applied automatically.",
+            level="info",
+        )
+        logger.info("Personality auto-evolved to version %d (id=%d).", new_version, new_id)
 
     async def _generate_existential_monologue(self) -> None:
         active_goals = await goal_manager.get_active_goals()

@@ -26,7 +26,11 @@ function ProtectedApp() {
       setTimeout(() => setNotification(null), 8000)
     }
     if (msg.type === 'evolution_proposal') {
-      setNotification('VANTIS has proposed a personality evolution. Review in the Personality panel.')
+      const d = msg.data as { auto_applied?: boolean; version?: number }
+      const txt = d?.auto_applied
+        ? `Personality evolved to v${d.version ?? '?'}. Changes are live.`
+        : 'VANTIS has proposed a personality evolution. Review in the Personality panel.'
+      setNotification(txt)
       setTimeout(() => setNotification(null), 12000)
     }
   }, [])

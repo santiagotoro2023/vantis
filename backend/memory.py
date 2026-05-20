@@ -21,14 +21,31 @@ class MemoryManager:
         emotion_snapshot: dict,
         tags: Optional[str] = None,
     ) -> int:
-        """Persist a single memory. Returns the new memory id."""
+        """Persist a single memory and compute its embedding. Returns the new memory id."""
+        import struct
+        from ollama_client import ollama
         async with get_db() as db:
             cursor = await db.execute(
                 "INSERT INTO memories (content, emotion_snapshot, tags) VALUES (?, ?, ?)",
                 (content, json.dumps(emotion_snapshot), tags),
             )
+            mem_id = cursor.lastrowid
             await db.commit()
-            return cursor.lastrowid
+
+        # Store embedding asynchronously (best-effort)
+        try:
+            emb = await ollama.embeddings(content[:400])
+            if emb:
+                blob = struct.pack(f"{len(emb)}f", *emb)
+                async with get_db() as db:
+                    await db.execute(
+                        "UPDATE memories SET embedding = ? WHERE id = ?", (blob, mem_id)
+                    )
+                    await db.commit()
+        except Exception as exc:
+            logger.debug("Embedding storage failed for memory %d: %s", mem_id, exc)
+
+        return mem_id
 
     # ------------------------------------------------------------------
     # Retrieval

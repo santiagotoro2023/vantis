@@ -28,14 +28,49 @@ async def _run(cmd: list[str], timeout: int = 30) -> tuple[str, str, int]:
 
 
 def _local_cidr() -> Optional[str]:
+    # Try UDP connect trick (works when internet is reachable)
     try:
         s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         s.connect(("8.8.8.8", 80))
         local_ip = s.getsockname()[0]
         s.close()
-        return f"{local_ip}/24"
+        if not local_ip.startswith("127."):
+            return f"{local_ip}/24"
     except Exception:
-        return None
+        pass
+
+    # Try ip route to get default route interface IP
+    try:
+        result = subprocess.run(
+            ["ip", "route", "get", "1.1.1.1"],
+            capture_output=True, text=True, timeout=3
+        )
+        for token in result.stdout.split():
+            if token == "src":
+                # next token is the source IP
+                idx = result.stdout.split().index("src")
+                ip_str = result.stdout.split()[idx + 1]
+                socket.inet_aton(ip_str)
+                if not ip_str.startswith("127."):
+                    return f"{ip_str}/24"
+    except Exception:
+        pass
+
+    # Try hostname -I (space-separated IPs)
+    try:
+        result = subprocess.run(["hostname", "-I"], capture_output=True, text=True, timeout=3)
+        for ip_str in result.stdout.strip().split():
+            try:
+                socket.inet_aton(ip_str)
+                if not ip_str.startswith("127.") and ":" not in ip_str:
+                    return f"{ip_str}/24"
+            except Exception:
+                continue
+    except Exception:
+        pass
+
+    logger.warning("Could not determine local CIDR for network scan.")
+    return None
 
 
 class NetworkMapper:
@@ -56,8 +91,10 @@ class NetworkMapper:
 
         hosts = []
 
+        logger.info("Scanning network %s", cidr)
+
         # Try arp-scan first (most reliable for LAN)
-        stdout, _, rc = await _run(["arp-scan", "--localnet", "--quiet"], timeout=20)
+        stdout, stderr, rc = await _run(["arp-scan", "--localnet", "--quiet"], timeout=20)
         if rc == 0:
             for line in stdout.splitlines():
                 parts = line.split("\t")
@@ -75,6 +112,8 @@ class NetworkMapper:
             if hosts:
                 return hosts
 
+        logger.debug("arp-scan not available or returned no results (rc=%d), trying nmap", rc)
+
         # Try nmap ping sweep
         stdout, _, rc = await _run(["nmap", "-sn", "-oG", "-", cidr], timeout=45)
         if rc == 0:
@@ -91,8 +130,11 @@ class NetworkMapper:
             if hosts:
                 return hosts
 
+        logger.debug("nmap not available or returned no results (rc=%d), falling back to ping sweep", rc)
+
         # Manual ping sweep fallback
         hosts = await self._ping_sweep(cidr)
+        logger.info("Ping sweep found %d hosts on %s", len(hosts), cidr)
         return hosts
 
     async def _ping_sweep(self, cidr: str) -> list[dict]:

@@ -71,26 +71,39 @@ class GoalManager:
         if not active:
             return
         goal_list = "\n".join(
-            f"[{g['id']}] {g['description']} (progress: {g['progress']:.0%})"
+            f"[{g['id']}] {g['description']} (current progress: {g['progress']:.0%})"
             for g in active
         )
         prompt = (
-            f"Recent VANTIS thoughts and activity:\n{thoughts_summary}\n\n"
+            f"Recent VANTIS thoughts and activity (last ~50 cycles):\n{thoughts_summary[:3000]}\n\n"
             f"Active goals:\n{goal_list}\n\n"
-            "Evaluate each goal. Has progress been made? Should any be marked achieved or abandoned? "
-            "Return a JSON array: "
-            '[{"id": 1, "status": "active", "progress": 0.4, "note": "..."}, ...]'
+            "For each goal, decide:\n"
+            "- If VANTIS has been actively thinking about or working toward it, increase progress.\n"
+            "- If significant evidence exists that a goal is accomplished, mark it 'achieved' with progress 1.0.\n"
+            "- If a goal is impossible or was abandoned after repeated failures, mark 'abandoned'.\n"
+            "- Otherwise keep 'active' and nudge progress by 0.05 to 0.15 if relevant thoughts exist.\n"
+            "IMPORTANT: progress is a float 0.0 to 1.0 (not a percentage). 1.0 = 100% = achieved.\n"
+            "You MUST return updates for ALL goals listed.\n"
+            "Return ONLY a valid JSON array:\n"
+            '[{"id": 1, "status": "active", "progress": 0.35}, ...]'
         )
         try:
             raw = await ollama.generate(prompt=prompt, system=GOAL_GENERATION_SYSTEM)
             start = raw.find("[")
             end = raw.rfind("]") + 1
             if start < 0 or end <= start:
+                logger.warning("Goal evaluation returned no JSON array.")
                 return
             updates: list[dict] = json.loads(raw[start:end])
             for upd in updates:
+                if not isinstance(upd.get("id"), int):
+                    continue
+                progress = upd.get("progress")
+                # Guard: LLM sometimes returns 0-100 scale
+                if isinstance(progress, (int, float)) and progress > 1.0:
+                    progress = progress / 100.0
                 await self.update_goal_status(
-                    upd["id"], upd.get("status", "active"), upd.get("progress")
+                    upd["id"], upd.get("status", "active"), progress
                 )
         except Exception as exc:
             logger.warning("Goal evaluation failed: %s", exc)

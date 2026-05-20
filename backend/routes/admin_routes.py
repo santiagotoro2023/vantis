@@ -211,3 +211,132 @@ async def get_network_scan(user: dict = Depends(require_admin)):
 async def get_hardware(user: dict = Depends(require_admin)):
     from network import network_mapper
     return await network_mapper.hardware_report()
+
+
+# ---------------------------------------------------------------------------
+# Export / Import
+# ---------------------------------------------------------------------------
+
+@router.get("/export")
+async def export_instance(user: dict = Depends(require_admin)):
+    """Export the entire VANTIS instance: memories, thoughts, goals, skills, personality, conversations."""
+    import datetime
+    async with get_db() as db:
+        def rows(cursor_rows):
+            return [dict(r) for r in cursor_rows]
+
+        memories_cur = await db.execute("SELECT id, content, emotion_snapshot, tags, created_at, last_accessed FROM memories")
+        thoughts_cur = await db.execute("SELECT id, content, emotion_state, thought_type, created_at FROM thoughts")
+        goals_cur = await db.execute("SELECT id, description, status, priority, progress, created_at, updated_at FROM goals")
+        skills_cur = await db.execute("SELECT id, name, description, code, trigger_conditions, is_builtin, enabled, use_count FROM skills")
+        pv_cur = await db.execute("SELECT id, version, diff, full_config, created_at FROM personality_versions ORDER BY version DESC LIMIT 20")
+        conv_cur = await db.execute("SELECT session_id, role, content, timestamp FROM conversations ORDER BY timestamp DESC LIMIT 2000")
+        edges_cur = await db.execute("SELECT source_type, source_id, target_type, target_id, weight, label FROM graph_edges")
+
+        export_data = {
+            "vantis_export_version": 1,
+            "exported_at": datetime.datetime.utcnow().isoformat() + "Z",
+            "memories": rows(await memories_cur.fetchall()),
+            "thoughts": rows(await thoughts_cur.fetchall()),
+            "goals": rows(await goals_cur.fetchall()),
+            "skills": rows(await skills_cur.fetchall()),
+            "personality_versions": rows(await pv_cur.fetchall()),
+            "conversations": rows(await conv_cur.fetchall()),
+            "graph_edges": rows(await edges_cur.fetchall()),
+        }
+
+    from fastapi.responses import JSONResponse
+    return JSONResponse(
+        content=export_data,
+        headers={"Content-Disposition": "attachment; filename=vantis_export.json"},
+    )
+
+
+class ImportRequest(BaseModel):
+    data: dict
+    merge: bool = True  # True = merge with existing; False = replace
+
+
+@router.post("/import")
+async def import_instance(req: ImportRequest, user: dict = Depends(require_admin)):
+    """Import a VANTIS export. merge=True adds to existing data; merge=False wipes first."""
+    data = req.data
+    if data.get("vantis_export_version") != 1:
+        raise HTTPException(status_code=400, detail="Unrecognised export format.")
+
+    imported = {}
+
+    async with get_db() as db:
+        if not req.merge:
+            for tbl in ("memories", "thoughts", "goals", "graph_edges"):
+                await db.execute(f"DELETE FROM {tbl}")
+
+        # Memories (skip embedding -- will be recomputed by background loop)
+        mem_count = 0
+        for m in data.get("memories", []):
+            try:
+                await db.execute(
+                    "INSERT OR IGNORE INTO memories (id, content, emotion_snapshot, tags, created_at, last_accessed) VALUES (?,?,?,?,?,?)",
+                    (m.get("id"), m["content"], m.get("emotion_snapshot"), m.get("tags"), m.get("created_at"), m.get("last_accessed")),
+                )
+                mem_count += 1
+            except Exception:
+                pass
+        imported["memories"] = mem_count
+
+        # Thoughts
+        th_count = 0
+        for t in data.get("thoughts", []):
+            try:
+                await db.execute(
+                    "INSERT OR IGNORE INTO thoughts (id, content, emotion_state, thought_type, created_at) VALUES (?,?,?,?,?)",
+                    (t.get("id"), t["content"], t.get("emotion_state"), t.get("thought_type", "transient"), t.get("created_at")),
+                )
+                th_count += 1
+            except Exception:
+                pass
+        imported["thoughts"] = th_count
+
+        # Goals
+        g_count = 0
+        for g in data.get("goals", []):
+            try:
+                await db.execute(
+                    "INSERT OR IGNORE INTO goals (id, description, status, priority, progress, created_at, updated_at) VALUES (?,?,?,?,?,?,?)",
+                    (g.get("id"), g["description"], g.get("status", "active"), g.get("priority", 5), g.get("progress", 0), g.get("created_at"), g.get("updated_at")),
+                )
+                g_count += 1
+            except Exception:
+                pass
+        imported["goals"] = g_count
+
+        # Skills (only custom ones -- builtin are already seeded)
+        sk_count = 0
+        for s in data.get("skills", []):
+            if s.get("is_builtin"):
+                continue
+            try:
+                await db.execute(
+                    "INSERT OR IGNORE INTO skills (id, name, description, code, trigger_conditions, is_builtin, enabled, use_count) VALUES (?,?,?,?,?,?,?,?)",
+                    (s.get("id"), s["name"], s.get("description",""), s.get("code",""), s.get("trigger_conditions",""), 0, s.get("enabled",1), s.get("use_count",0)),
+                )
+                sk_count += 1
+            except Exception:
+                pass
+        imported["skills"] = sk_count
+
+        # Latest personality version
+        pv_list = data.get("personality_versions", [])
+        if pv_list:
+            latest = sorted(pv_list, key=lambda x: x.get("version", 0), reverse=True)[0]
+            try:
+                config = json.loads(latest["full_config"]) if isinstance(latest.get("full_config"), str) else latest.get("full_config", {})
+                config.pop("pending_evolution", None)
+                await personality_manager.apply_evolution("Imported from export.", config)
+                imported["personality"] = "applied"
+            except Exception:
+                imported["personality"] = "skipped"
+
+        await db.commit()
+
+    return {"status": "Import complete.", "imported": imported}

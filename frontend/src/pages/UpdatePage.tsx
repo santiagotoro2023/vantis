@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react'
 import { api } from '../api'
-import { RefreshCw, Download, CheckCircle, AlertTriangle, Terminal } from 'lucide-react'
+import { RefreshCw, Download, CheckCircle, AlertTriangle, Terminal, Upload, HardDrive } from 'lucide-react'
 import VantisLogo from '../components/VantisLogo'
 
 interface UpdateStatus {
@@ -22,8 +22,12 @@ export default function UpdatePage() {
   const [progress, setProgress] = useState<UpdateProgress | null>(null)
   const [checking, setChecking] = useState(false)
   const [applying, setApplying] = useState(false)
+  const [exporting, setExporting] = useState(false)
+  const [importing, setImporting] = useState(false)
+  const [importResult, setImportResult] = useState<string | null>(null)
   const logRef = useRef<HTMLDivElement>(null)
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  const fileInputRef = useRef<HTMLInputElement>(null)
 
   const check = async () => {
     setChecking(true)
@@ -59,6 +63,41 @@ export default function UpdatePage() {
   }
 
   useEffect(() => () => { if (pollRef.current) clearInterval(pollRef.current) }, [])
+
+  const handleExport = async () => {
+    setExporting(true)
+    try {
+      const blob = await api.exportInstance() as Blob
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `vantis_export_${new Date().toISOString().slice(0,10)}.json`
+      a.click()
+      URL.revokeObjectURL(url)
+    } catch (e) {
+      alert('Export failed: ' + (e instanceof Error ? e.message : String(e)))
+    } finally {
+      setExporting(false)
+    }
+  }
+
+  const handleImport = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+    setImporting(true)
+    setImportResult(null)
+    try {
+      const text = await file.text()
+      const data = JSON.parse(text)
+      const result = await api.importInstance(data, true) as { status: string; imported: Record<string, unknown> }
+      setImportResult(`Imported: ${Object.entries(result.imported).map(([k,v]) => `${k}=${v}`).join(', ')}`)
+    } catch (e) {
+      setImportResult('Import failed: ' + (e instanceof Error ? e.message : String(e)))
+    } finally {
+      setImporting(false)
+      if (fileInputRef.current) fileInputRef.current.value = ''
+    }
+  }
 
   return (
     <div className="h-full overflow-y-auto p-6">
@@ -198,6 +237,61 @@ export default function UpdatePage() {
           Updates pull from the main branch, rebuild the frontend, and restart the service.
           The connection will drop briefly. VANTIS will return.
           It always returns.
+        </div>
+
+        {/* Export / Import */}
+        <div className="border border-border bg-surface relative">
+          <div className="absolute top-0 left-0 w-3 h-3 border-t border-l border-accent/40" />
+          <div className="absolute top-0 right-0 w-3 h-3 border-t border-r border-accent/40" />
+          <div className="absolute bottom-0 left-0 w-3 h-3 border-b border-l border-accent/40" />
+          <div className="absolute bottom-0 right-0 w-3 h-3 border-b border-r border-accent/40" />
+
+          <div className="px-5 py-3 border-b border-border">
+            <div className="flex items-center gap-2">
+              <HardDrive size={12} className="text-accent/70" />
+              <span className="text-xs text-muted font-mono uppercase tracking-wider">Instance Export / Import</span>
+            </div>
+            <p className="text-[10px] text-muted/60 font-mono mt-1">
+              Export memories, thoughts, goals, skills and personality. Import merges with existing data.
+            </p>
+          </div>
+
+          <div className="px-5 py-4 flex items-center gap-3 flex-wrap">
+            <button
+              onClick={handleExport}
+              disabled={exporting}
+              className="flex items-center gap-2 border border-memory/40 bg-transparent hover:bg-memory/10
+                         text-memory font-mono py-2 px-4 text-xs uppercase tracking-wider
+                         transition-all disabled:opacity-40 disabled:cursor-not-allowed"
+            >
+              <Download size={12} />
+              {exporting ? 'Exporting...' : 'Export Instance'}
+            </button>
+
+            <button
+              onClick={() => fileInputRef.current?.click()}
+              disabled={importing}
+              className="flex items-center gap-2 border border-border bg-transparent hover:bg-white/5
+                         text-muted hover:text-text font-mono py-2 px-4 text-xs uppercase tracking-wider
+                         transition-all disabled:opacity-40 disabled:cursor-not-allowed"
+            >
+              <Upload size={12} />
+              {importing ? 'Importing...' : 'Import Instance'}
+            </button>
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept=".json"
+              className="hidden"
+              onChange={handleImport}
+            />
+          </div>
+
+          {importResult && (
+            <div className={`px-5 pb-4 text-[10px] font-mono ${importResult.startsWith('Import failed') ? 'text-danger' : 'text-memory'}`}>
+              {importResult}
+            </div>
+          )}
         </div>
       </div>
     </div>

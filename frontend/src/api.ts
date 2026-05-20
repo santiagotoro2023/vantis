@@ -111,6 +111,14 @@ export const api = {
   updateGoalFull: (id: number, data: Record<string, unknown>) =>
     request(`/goals/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
 
+  // Export / Import
+  exportInstance: () =>
+    fetch('/api/admin/export', {
+      headers: { ...({ Authorization: `Bearer ${localStorage.getItem('vantis_token')}` }) },
+    }).then(r => r.ok ? r.blob() : r.json().then((e: { detail?: string }) => Promise.reject(new Error(e.detail || 'Export failed')))),
+  importInstance: (data: Record<string, unknown>, merge = true) =>
+    request('/admin/import', { method: 'POST', body: JSON.stringify({ data, merge }) }),
+
   // Update
   checkUpdate: () => request<{ current_version: string; latest_version: string; update_available: boolean; release: { tag_name?: string; name?: string; body?: string; published_at?: string; html_url?: string }; update_running: boolean }>('/admin/update/check'),
   applyUpdate: () => request('/admin/update/apply', { method: 'POST' }),
