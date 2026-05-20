@@ -1,6 +1,8 @@
 import json
 import logging
+import os
 import secrets
+from pathlib import Path
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -250,6 +252,40 @@ async def export_instance(user: dict = Depends(require_admin)):
         content=export_data,
         headers={"Content-Disposition": "attachment; filename=vantis_export.json"},
     )
+
+
+class ExportScheduleRequest(BaseModel):
+    path: str
+    interval_hours: int = 24
+
+
+@router.post("/export/schedule")
+async def schedule_export(req: ExportScheduleRequest, user: dict = Depends(require_admin)):
+    """Schedule periodic auto-exports of the VANTIS instance to a given path."""
+    from config import settings as cfg
+    meta_dir = Path(cfg.DB_PATH).parent / ".vantis-meta"
+    meta_dir.mkdir(parents=True, exist_ok=True)
+    schedule_file = meta_dir / "export-schedule.json"
+
+    schedule = {
+        "path": req.path,
+        "interval_hours": req.interval_hours,
+        "last_export": None,
+    }
+    # Preserve last_export if schedule already exists
+    if schedule_file.exists():
+        try:
+            existing = json.loads(schedule_file.read_text())
+            schedule["last_export"] = existing.get("last_export")
+        except Exception:
+            pass
+
+    schedule_file.write_text(json.dumps(schedule, indent=2))
+    return {
+        "status": "Export schedule saved.",
+        "path": req.path,
+        "interval_hours": req.interval_hours,
+    }
 
 
 class ImportRequest(BaseModel):

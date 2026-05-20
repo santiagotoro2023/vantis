@@ -87,7 +87,8 @@ class GraphManager:
         async with get_db() as db:
             # Thoughts
             cursor = await db.execute(
-                "SELECT id, content, emotion_state, created_at, thought_type "
+                "SELECT id, content, emotion_state, created_at, thought_type, "
+                "COALESCE(importance_score, 0.5) as importance_score "
                 "FROM thoughts ORDER BY created_at DESC LIMIT 100"
             )
             for r in await cursor.fetchall():
@@ -102,6 +103,7 @@ class GraphManager:
                         "emotion_state": r["emotion_state"],
                         "thought_type": r["thought_type"],
                         "created_at": r["created_at"],
+                        "importance_score": r["importance_score"],
                         "color": NODE_COLORS["thought"],
                     },
                     "position": {"x": 0, "y": 0},
@@ -109,7 +111,8 @@ class GraphManager:
 
             # Memories
             cursor = await db.execute(
-                "SELECT id, content, tags, created_at, last_accessed "
+                "SELECT id, content, tags, created_at, last_accessed, "
+                "COALESCE(importance_score, 0.5) as importance_score "
                 "FROM memories ORDER BY last_accessed DESC LIMIT 80"
             )
             for r in await cursor.fetchall():
@@ -124,6 +127,7 @@ class GraphManager:
                         "tags": r["tags"],
                         "created_at": r["created_at"],
                         "last_accessed": r["last_accessed"],
+                        "importance_score": r["importance_score"],
                         "color": NODE_COLORS["memory"],
                     },
                     "position": {"x": 0, "y": 0},
@@ -353,7 +357,93 @@ class GraphManager:
 
         if created:
             logger.info("Built %d new semantic edges.", created)
+
+        # Best-effort importance scoring after edges are built
+        try:
+            await self.compute_importance_scores()
+        except Exception as exc:
+            logger.debug("Importance scoring after edge build failed: %s", exc)
+
         return created
+
+    async def compute_importance_scores(self) -> dict:
+        """
+        Compute PageRank-style importance scores for memory and thought nodes.
+        Updates importance_score columns in the database and returns node_key -> score dict.
+        """
+        try:
+            async with get_db() as db:
+                cursor = await db.execute("SELECT source_type, source_id, target_type, target_id, weight FROM graph_edges")
+                edges = await cursor.fetchall()
+
+            if not edges:
+                return {}
+
+            # Build adjacency: incoming weights and out-degrees
+            in_weights: dict[str, float] = {}   # node_key -> sum of incoming weights
+            out_degrees: dict[str, int] = {}    # node_key -> count of outgoing edges
+            all_nodes: set[str] = set()
+
+            for e in edges:
+                src = f"{e['source_type']}_{e['source_id']}"
+                tgt = f"{e['target_type']}_{e['target_id']}"
+                all_nodes.add(src)
+                all_nodes.add(tgt)
+                in_weights[tgt] = in_weights.get(tgt, 0.0) + e["weight"]
+                out_degrees[src] = out_degrees.get(src, 0) + 1
+
+            # Initialize scores
+            scores: dict[str, float] = {n: 0.5 for n in all_nodes}
+
+            # 3 iterations of PageRank-style scoring
+            for _ in range(3):
+                new_scores: dict[str, float] = {}
+                for node in all_nodes:
+                    # Sum incoming contributions
+                    incoming_sum = 0.0
+                    for e in edges:
+                        src = f"{e['source_type']}_{e['source_id']}"
+                        tgt = f"{e['target_type']}_{e['target_id']}"
+                        if tgt == node:
+                            out_deg = out_degrees.get(src, 1) or 1
+                            incoming_sum += scores.get(src, 0.5) / out_deg
+                    new_scores[node] = 0.15 + 0.85 * incoming_sum
+                scores = new_scores
+
+            # Normalize scores to [0, 1]
+            if scores:
+                max_score = max(scores.values()) or 1.0
+                scores = {k: min(1.0, v / max_score) for k, v in scores.items()}
+
+            # Update DB for memory and thought nodes
+            async with get_db() as db:
+                for node_key, score in scores.items():
+                    parts = node_key.rsplit("_", 1)
+                    if len(parts) != 2:
+                        continue
+                    node_type, node_id_str = parts
+                    try:
+                        node_id = int(node_id_str)
+                    except ValueError:
+                        continue
+                    if node_type == "memory":
+                        await db.execute(
+                            "UPDATE memories SET importance_score = ? WHERE id = ?",
+                            (score, node_id),
+                        )
+                    elif node_type == "thought":
+                        await db.execute(
+                            "UPDATE thoughts SET importance_score = ? WHERE id = ?",
+                            (score, node_id),
+                        )
+                await db.commit()
+
+            logger.info("Computed importance scores for %d nodes.", len(scores))
+            return scores
+
+        except Exception as exc:
+            logger.warning("compute_importance_scores failed: %s", exc)
+            return {}
 
     async def get_or_create_conversation_session(self, session_id: str) -> int:
         """Return the integer node ID for a conversation session, creating it if needed."""

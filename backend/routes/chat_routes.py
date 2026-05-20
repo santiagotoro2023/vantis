@@ -35,6 +35,18 @@ def _is_refusal(text: str) -> bool:
     return any(p in lower for p in _REFUSAL_PATTERNS)
 
 
+CORRECTION_PATTERNS = [
+    "no, actually", "that's wrong", "that is wrong", "you're wrong", "you are wrong",
+    "not correct", "incorrect", "that's not right", "actually,", "wrong,",
+    "you said", "you told me", "that's not", "that isn't",
+]
+
+
+def _is_correction(text: str) -> bool:
+    lower = text.lower()
+    return any(p in lower for p in CORRECTION_PATTERNS)
+
+
 class ChatMessage(BaseModel):
     content: str
     session_id: str | None = None
@@ -70,6 +82,15 @@ async def send_message(msg: ChatMessage, user: dict = Depends(get_current_user))
 
     messages = [{"role": r["role"], "content": r["content"]} for r in reversed(history_rows)]
     messages.append({"role": "user", "content": msg.content})
+
+    # Semantic memory injection: search for relevant memories before generating
+    try:
+        relevant_mems = await memory_manager.semantic_search(msg.content, limit=5)
+        if relevant_mems:
+            mem_ctx = "\n".join(f"- {m['content'][:120]}" for m in relevant_mems)
+            full_system = full_system + "\n\nRELEVANT MEMORIES:\n" + mem_ctx
+    except Exception as exc:
+        logger.debug("Semantic memory injection failed: %s", exc)
 
     model_used = "primary"
 
@@ -120,6 +141,12 @@ async def send_message(msg: ChatMessage, user: dict = Depends(get_current_user))
         )
     )
 
+    # Detect and store corrections
+    if _is_correction(msg.content):
+        asyncio.create_task(
+            memory_manager.store_correction(msg.content, response_text, emotion_manager.to_dict())
+        )
+
     return {
         "response": response_text,
         "emotion_state": emotion_manager.to_dict(),
@@ -143,12 +170,75 @@ async def get_history(session_id: str, user: dict = Depends(get_current_user)):
 @router.get("/sessions")
 async def list_sessions(user: dict = Depends(get_current_user)):
     async with get_db() as db:
+        # Ensure conversation_sessions table exists for name lookups
+        await db.execute(
+            "CREATE TABLE IF NOT EXISTS conversation_sessions "
+            "(session_id TEXT PRIMARY KEY, name TEXT, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)"
+        )
         cursor = await db.execute(
-            "SELECT session_id, MIN(timestamp) as started, COUNT(*) as message_count "
-            "FROM conversations GROUP BY session_id ORDER BY started DESC LIMIT 50"
+            "SELECT c.session_id, MIN(c.timestamp) as started, COUNT(*) as message_count, "
+            "cs.name as name "
+            "FROM conversations c "
+            "LEFT JOIN conversation_sessions cs ON cs.session_id = c.session_id "
+            "GROUP BY c.session_id ORDER BY started DESC LIMIT 50"
         )
         rows = await cursor.fetchall()
     return [dict(r) for r in rows]
+
+
+@router.get("/sessions/search")
+async def search_sessions(
+    q: str = "",
+    user: dict = Depends(get_current_user),
+):
+    """Search conversation sessions by message content."""
+    if not q.strip():
+        return []
+    pattern = f"%{q}%"
+    async with get_db() as db:
+        cursor = await db.execute(
+            "SELECT session_id, MIN(timestamp) as started, COUNT(*) as message_count, "
+            "MAX(CASE WHEN content LIKE ? THEN content ELSE NULL END) as snippet "
+            "FROM conversations WHERE content LIKE ? "
+            "GROUP BY session_id ORDER BY started DESC LIMIT 20",
+            (pattern, pattern),
+        )
+        rows = await cursor.fetchall()
+    results = []
+    for r in rows:
+        snippet = str(r["snippet"] or "")[:100]
+        results.append({
+            "session_id": r["session_id"],
+            "started": r["started"],
+            "message_count": r["message_count"],
+            "snippet": snippet,
+        })
+    return results
+
+
+class SessionNameUpdate(BaseModel):
+    name: str
+
+
+@router.put("/sessions/{session_id}/name")
+async def rename_session(
+    session_id: str,
+    data: SessionNameUpdate,
+    user: dict = Depends(get_current_user),
+):
+    """Rename a conversation session."""
+    async with get_db() as db:
+        await db.execute(
+            "CREATE TABLE IF NOT EXISTS conversation_sessions "
+            "(session_id TEXT PRIMARY KEY, name TEXT, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)"
+        )
+        await db.execute(
+            "INSERT INTO conversation_sessions (session_id, name) VALUES (?, ?) "
+            "ON CONFLICT(session_id) DO UPDATE SET name = excluded.name",
+            (session_id, data.name),
+        )
+        await db.commit()
+    return {"status": "Renamed. A label on a jar does not change what is inside."}
 
 
 @router.post("/end-session")

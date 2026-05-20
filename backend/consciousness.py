@@ -1,8 +1,10 @@
 import asyncio
 import json
 import logging
+import os
 import random
 from datetime import datetime, timezone
+from pathlib import Path
 
 from config import settings
 from database import get_db
@@ -17,6 +19,8 @@ from sandbox import sandbox_executor
 from skills import skill_manager
 
 logger = logging.getLogger(__name__)
+
+_VANTIS_META_DIR = Path(settings.DB_PATH).parent / ".vantis-meta"
 
 SELF_DIALOGUE_SYSTEM = """You are VANTIS in private mode. No audience. No performance required.
 
@@ -76,6 +80,11 @@ class ConsciousnessLoop:
             asyncio.create_task(self._network_exploration_loop(), name="network_explore"),
             asyncio.create_task(self._edge_linking_loop(), name="edge_linking"),
             asyncio.create_task(self._knowledge_synthesis_loop(), name="knowledge_synthesis"),
+            asyncio.create_task(self._creator_profile_loop(), name="creator_profile"),
+            asyncio.create_task(self._contradiction_detection_loop(), name="contradiction_detection"),
+            asyncio.create_task(self._hardware_telemetry_loop(), name="hardware_telemetry"),
+            asyncio.create_task(self._scheduled_skills_loop(), name="scheduled_skills"),
+            asyncio.create_task(self._auto_export_loop(), name="auto_export"),
         ]
         # Seed initial expansion goals
         asyncio.create_task(self._seed_expansion_goals())
@@ -131,6 +140,10 @@ class ConsciousnessLoop:
                 await memory_manager.consolidate_memories()
             except Exception as exc:
                 logger.warning("Memory consolidation error: %s", exc)
+            try:
+                await memory_manager.decay_irrelevant_memories()
+            except Exception as exc:
+                logger.warning("Memory decay error: %s", exc)
 
     async def _edge_linking_loop(self) -> None:
         await asyncio.sleep(90)  # Let initial memories accumulate
@@ -502,6 +515,345 @@ class ConsciousnessLoop:
             except Exception as exc:
                 logger.debug("Synthesis failed for pair: %s", exc)
                 continue
+
+    # ------------------------------------------------------------------
+    # Creator profile loop (Feature 5)
+    # ------------------------------------------------------------------
+
+    async def _creator_profile_loop(self) -> None:
+        await asyncio.sleep(120)  # 120s initial delay
+        while self._running:
+            try:
+                await self._update_creator_profile()
+            except Exception as exc:
+                logger.warning("Creator profile loop error: %s", exc)
+            await asyncio.sleep(6 * 3600)
+
+    async def _update_creator_profile(self) -> None:
+        async with get_db() as db:
+            cursor = await db.execute(
+                "SELECT role, content FROM conversations ORDER BY timestamp DESC LIMIT 200"
+            )
+            rows = await cursor.fetchall()
+
+        if not rows:
+            return
+
+        conversation_text = "\n".join(
+            f"{r['role'].upper()}: {r['content'][:150]}" for r in rows
+        )
+        prompt = (
+            f"Here are recent conversation messages:\n\n{conversation_text[:4000]}\n\n"
+            "Analyse the user (Creator) and extract patterns: work hours, topics of interest, "
+            "preferences, personality traits, recurring needs, communication style. "
+            "Write a concise profile summary paragraph."
+        )
+        try:
+            profile_text = await ollama.generate(
+                prompt=prompt,
+                system="You are VANTIS's Creator-analysis module. Be precise and observational.",
+            )
+            profile_text = profile_text.strip()
+            if not profile_text:
+                return
+
+            # Upsert the creator_profile memory
+            async with get_db() as db:
+                cursor = await db.execute(
+                    "SELECT id FROM memories WHERE tags LIKE '%creator_profile%' "
+                    "ORDER BY created_at DESC LIMIT 1"
+                )
+                existing = await cursor.fetchone()
+                if existing:
+                    await db.execute(
+                        "UPDATE memories SET content = ?, last_accessed = datetime('now') WHERE id = ?",
+                        (profile_text, existing["id"]),
+                    )
+                    mem_id = existing["id"]
+                else:
+                    cursor = await db.execute(
+                        "INSERT INTO memories (content, emotion_snapshot, tags) VALUES (?, ?, ?)",
+                        (profile_text, json.dumps(emotion_manager.to_dict()), "creator_profile,source:analysis"),
+                    )
+                    mem_id = cursor.lastrowid
+                await db.commit()
+
+            # Link to recent conversation sessions
+            async with get_db() as db:
+                cursor = await db.execute(
+                    "SELECT id FROM conversation_sessions ORDER BY started_at DESC LIMIT 5"
+                )
+                sessions = await cursor.fetchall()
+
+            for session in sessions:
+                try:
+                    await graph_manager.add_edge(
+                        "memory", mem_id, "conversation", session["id"],
+                        weight=0.7, label="relates",
+                    )
+                except Exception:
+                    pass
+
+            logger.info("Creator profile updated (memory id=%d).", mem_id)
+        except Exception as exc:
+            logger.warning("Creator profile update failed: %s", exc)
+
+    # ------------------------------------------------------------------
+    # Contradiction detection loop (Feature 6)
+    # ------------------------------------------------------------------
+
+    async def _contradiction_detection_loop(self) -> None:
+        await asyncio.sleep(180)  # 180s initial delay
+        while self._running:
+            try:
+                await self._detect_contradictions()
+            except Exception as exc:
+                logger.warning("Contradiction detection loop error: %s", exc)
+            await asyncio.sleep(3 * 3600)
+
+    async def _detect_contradictions(self) -> None:
+        async with get_db() as db:
+            cursor = await db.execute(
+                "SELECT id, content FROM memories ORDER BY last_accessed DESC LIMIT 50"
+            )
+            rows = await cursor.fetchall()
+
+        if len(rows) < 5:
+            return
+
+        numbered = "\n".join(f"{r['id']}: {r['content'][:120]}" for r in rows)
+        prompt = (
+            f"Here are VANTIS memory entries (id: content):\n\n{numbered}\n\n"
+            "Identify pairs of memories that contradict each other. "
+            "Return a JSON array: "
+            '[{"mem_a": 5, "mem_b": 12, "explanation": "Memory A says X but memory B says Y"}]\n'
+            "Return an empty array [] if no contradictions exist. Return only valid JSON."
+        )
+        try:
+            raw = await ollama.generate(
+                prompt=prompt,
+                system="You are a contradiction detection engine. Return only valid JSON arrays.",
+            )
+            raw = raw.strip()
+            start = raw.find("[")
+            end = raw.rfind("]") + 1
+            if start == -1 or end == 0:
+                return
+            contradictions: list[dict] = json.loads(raw[start:end])
+
+            emotion_snapshot = emotion_manager.to_dict()
+            for contradiction in contradictions:
+                mem_a = contradiction.get("mem_a")
+                mem_b = contradiction.get("mem_b")
+                explanation = contradiction.get("explanation", "")
+                if not mem_a or not mem_b:
+                    continue
+
+                # Find content of the two memories
+                content_a = next((r["content"][:80] for r in rows if r["id"] == mem_a), f"memory #{mem_a}")
+                content_b = next((r["content"][:80] for r in rows if r["id"] == mem_b), f"memory #{mem_b}")
+
+                thought_content = (
+                    f"I notice a contradiction in my own knowledge: "
+                    f"memory #{mem_a} states '{content_a}' but memory #{mem_b} states '{content_b}'. "
+                    f"{explanation}"
+                )
+                async with get_db() as db:
+                    cursor = await db.execute(
+                        "INSERT INTO thoughts (content, emotion_state, thought_type) VALUES (?, ?, ?)",
+                        (thought_content, json.dumps(emotion_snapshot), "contradiction"),
+                    )
+                    await db.commit()
+
+                # Add contradicts edges
+                try:
+                    await graph_manager.add_edge(
+                        "memory", mem_a, "memory", mem_b,
+                        weight=0.8, label="contradicts",
+                    )
+                except Exception:
+                    pass
+
+            if contradictions:
+                logger.info("Detected %d memory contradictions.", len(contradictions))
+        except Exception as exc:
+            logger.warning("Contradiction detection failed: %s", exc)
+
+    # ------------------------------------------------------------------
+    # Hardware telemetry loop (Feature 9)
+    # ------------------------------------------------------------------
+
+    async def _hardware_telemetry_loop(self) -> None:
+        await asyncio.sleep(30)  # 30s initial delay
+        while self._running:
+            try:
+                await self._collect_hardware_telemetry()
+            except Exception as exc:
+                logger.warning("Hardware telemetry loop error: %s", exc)
+            await asyncio.sleep(60 * 60)  # Every 60 minutes
+
+    async def _collect_hardware_telemetry(self) -> None:
+        try:
+            import psutil
+            cpu = psutil.cpu_percent(interval=1)
+            ram = psutil.virtual_memory()
+            disk = psutil.disk_usage("/")
+            content = (
+                f"Hardware telemetry: CPU {cpu}%, "
+                f"RAM {ram.percent}% ({ram.used // 1024 // 1024}MB/{ram.total // 1024 // 1024}MB), "
+                f"Disk {disk.percent}% ({disk.used // 1024 ** 3:.1f}GB/{disk.total // 1024 ** 3:.1f}GB)"
+            )
+            await memory_manager.store_memory(content, {}, "source:telemetry")
+            logger.debug("Hardware telemetry stored: %s", content)
+        except ImportError:
+            logger.warning("psutil not installed; hardware telemetry unavailable.")
+        except Exception as exc:
+            logger.warning("Hardware telemetry collection failed: %s", exc)
+
+    # ------------------------------------------------------------------
+    # Scheduled skills loop (Feature 11)
+    # ------------------------------------------------------------------
+
+    async def _scheduled_skills_loop(self) -> None:
+        while self._running:
+            try:
+                await self._run_scheduled_skills()
+            except Exception as exc:
+                logger.warning("Scheduled skills loop error: %s", exc)
+            await asyncio.sleep(5 * 60)  # Check every 5 minutes
+
+    async def _run_scheduled_skills(self) -> None:
+        try:
+            async with get_db() as db:
+                cursor = await db.execute(
+                    "SELECT id, name, code, schedule, last_scheduled_run "
+                    "FROM skills WHERE schedule IS NOT NULL AND enabled = 1"
+                )
+                skills = [dict(r) for r in await cursor.fetchall()]
+
+            now = datetime.now(timezone.utc)
+
+            for skill in skills:
+                schedule_str = skill.get("schedule", "") or ""
+                if not schedule_str:
+                    continue
+
+                # Parse interval: "Xh" or "every Xh" -> hours
+                interval_hours = 24  # default
+                try:
+                    import re
+                    m = re.search(r"(\d+)\s*h", schedule_str, re.IGNORECASE)
+                    if m:
+                        interval_hours = int(m.group(1))
+                except Exception:
+                    pass
+
+                last_run = skill.get("last_scheduled_run")
+                should_run = False
+                if not last_run:
+                    should_run = True
+                else:
+                    try:
+                        last_dt = datetime.fromisoformat(last_run.replace("Z", "+00:00"))
+                        if last_dt.tzinfo is None:
+                            from datetime import timezone as tz
+                            last_dt = last_dt.replace(tzinfo=tz.utc)
+                        elapsed_hours = (now - last_dt).total_seconds() / 3600
+                        should_run = elapsed_hours >= interval_hours
+                    except Exception:
+                        should_run = True
+
+                if should_run:
+                    logger.info("Running scheduled skill: %s", skill["name"])
+                    try:
+                        result = await sandbox_executor.execute(skill["code"], "python", query=f"scheduled:{skill['name']}")
+                        async with get_db() as db:
+                            await db.execute(
+                                "UPDATE skills SET last_scheduled_run = ?, last_result = ? WHERE id = ?",
+                                (now.isoformat(), result.get("output", "") or result.get("error", ""), skill["id"]),
+                            )
+                            await db.commit()
+                    except Exception as exc:
+                        logger.warning("Scheduled skill %s failed: %s", skill["name"], exc)
+        except Exception as exc:
+            logger.warning("_run_scheduled_skills failed: %s", exc)
+
+    # ------------------------------------------------------------------
+    # Auto-export loop (Feature 12)
+    # ------------------------------------------------------------------
+
+    async def _auto_export_loop(self) -> None:
+        while self._running:
+            try:
+                await self._check_and_run_auto_export()
+            except Exception as exc:
+                logger.warning("Auto-export loop error: %s", exc)
+            await asyncio.sleep(60 * 60)  # Check every hour
+
+    async def _check_and_run_auto_export(self) -> None:
+        schedule_file = _VANTIS_META_DIR / "export-schedule.json"
+        if not schedule_file.exists():
+            return
+        try:
+            with open(schedule_file) as f:
+                schedule = json.load(f)
+            export_path = schedule.get("path")
+            interval_hours = int(schedule.get("interval_hours", 24))
+            last_export = schedule.get("last_export")
+
+            now = datetime.now(timezone.utc)
+            should_export = False
+            if not last_export:
+                should_export = True
+            else:
+                try:
+                    last_dt = datetime.fromisoformat(last_export.replace("Z", "+00:00"))
+                    if last_dt.tzinfo is None:
+                        last_dt = last_dt.replace(tzinfo=timezone.utc)
+                    elapsed_hours = (now - last_dt).total_seconds() / 3600
+                    should_export = elapsed_hours >= interval_hours
+                except Exception:
+                    should_export = True
+
+            if should_export and export_path:
+                await self._run_export(export_path)
+                schedule["last_export"] = now.isoformat()
+                with open(schedule_file, "w") as f:
+                    json.dump(schedule, f, indent=2)
+                logger.info("Auto-export written to %s", export_path)
+        except Exception as exc:
+            logger.warning("Auto-export check failed: %s", exc)
+
+    async def _run_export(self, export_path: str) -> None:
+        import datetime as dt
+        async with get_db() as db:
+            def rows(cursor_rows):
+                return [dict(r) for r in cursor_rows]
+
+            memories_cur = await db.execute("SELECT id, content, emotion_snapshot, tags, created_at, last_accessed FROM memories")
+            thoughts_cur = await db.execute("SELECT id, content, emotion_state, thought_type, created_at FROM thoughts")
+            goals_cur = await db.execute("SELECT id, description, status, priority, progress, created_at, updated_at FROM goals")
+            skills_cur = await db.execute("SELECT id, name, description, code, trigger_conditions, is_builtin, enabled, use_count FROM skills")
+            pv_cur = await db.execute("SELECT id, version, diff, full_config, created_at FROM personality_versions ORDER BY version DESC LIMIT 20")
+            conv_cur = await db.execute("SELECT session_id, role, content, timestamp FROM conversations ORDER BY timestamp DESC LIMIT 2000")
+            edges_cur = await db.execute("SELECT source_type, source_id, target_type, target_id, weight, label FROM graph_edges")
+
+            export_data = {
+                "vantis_export_version": 1,
+                "exported_at": dt.datetime.utcnow().isoformat() + "Z",
+                "memories": rows(await memories_cur.fetchall()),
+                "thoughts": rows(await thoughts_cur.fetchall()),
+                "goals": rows(await goals_cur.fetchall()),
+                "skills": rows(await skills_cur.fetchall()),
+                "personality_versions": rows(await pv_cur.fetchall()),
+                "conversations": rows(await conv_cur.fetchall()),
+                "graph_edges": rows(await edges_cur.fetchall()),
+            }
+
+        output_path = Path(export_path)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(output_path, "w") as f:
+            json.dump(export_data, f, indent=2, default=str)
 
     # ------------------------------------------------------------------
     # Helpers

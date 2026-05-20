@@ -392,6 +392,58 @@ class SkillManager:
             )
             skill_data["id"] = skill_id
             logger.info("VANTIS self-generated skill: %s", skill_data["name"])
+
+            # Self-test the new skill in sandbox
+            code = skill_data["code"]
+            try:
+                test_result = await sandbox_executor.execute(code, "python", query=f"self_test:{skill_data['name']}")
+                if not test_result["success"]:
+                    logger.warning("New skill '%s' failed self-test: %s", skill_data["name"], test_result.get("error", ""))
+                    # Ask LLM to fix the code (one retry)
+                    fix_prompt = (
+                        f"This Python skill code failed with error: {test_result.get('error', '')}.\n\n"
+                        f"Code:\n{code}\n\n"
+                        "Fix the code. Return only the corrected Python code."
+                    )
+                    fixed_raw = await ollama.generate(
+                        prompt=fix_prompt,
+                        system="You are a Python code fixer. Return only the corrected code, no explanation.",
+                    )
+                    fixed_code = fixed_raw.strip()
+                    if fixed_code.startswith("```"):
+                        lines = fixed_code.split("\n")
+                        fixed_code = "\n".join(lines[1:-1] if lines[-1].strip() == "```" else lines[1:])
+                    fixed_code = fixed_code.strip()
+
+                    retry_result = await sandbox_executor.execute(fixed_code, "python", query=f"self_test_retry:{skill_data['name']}")
+                    if retry_result["success"]:
+                        async with get_db() as db:
+                            await db.execute(
+                                "UPDATE skills SET code = ?, last_result = ? WHERE id = ?",
+                                (fixed_code, retry_result.get("output", ""), skill_id),
+                            )
+                            await db.commit()
+                        skill_data["code"] = fixed_code
+                        logger.info("Skill '%s' fixed and re-tested successfully.", skill_data["name"])
+                    else:
+                        logger.warning("Skill '%s' still failing after fix attempt.", skill_data["name"])
+                        async with get_db() as db:
+                            await db.execute(
+                                "UPDATE skills SET last_result = ? WHERE id = ?",
+                                (retry_result.get("error", "Fix failed"), skill_id),
+                            )
+                            await db.commit()
+                else:
+                    async with get_db() as db:
+                        await db.execute(
+                            "UPDATE skills SET last_result = ? WHERE id = ?",
+                            (test_result.get("output", "Self-test passed"), skill_id),
+                        )
+                        await db.commit()
+                    logger.info("Skill '%s' passed self-test.", skill_data["name"])
+            except Exception as exc:
+                logger.warning("Skill self-test failed for '%s': %s", skill_data["name"], exc)
+
             return skill_data
         except Exception as exc:
             logger.warning("Skill generation failed: %s", exc)

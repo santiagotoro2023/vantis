@@ -1,11 +1,27 @@
 import json
 import logging
+import math
+import struct
 from typing import Optional
 
 from database import get_db
 from ollama_client import ollama
 
 logger = logging.getLogger(__name__)
+
+
+def _cosine_similarity(a: list, b: list) -> float:
+    if not a or not b or len(a) != len(b):
+        return 0.0
+    dot = sum(x * y for x, y in zip(a, b))
+    na = math.sqrt(sum(x * x for x in a))
+    nb = math.sqrt(sum(y * y for y in b))
+    return dot / (na * nb) if na and nb else 0.0
+
+
+def _unpack(blob: bytes) -> list:
+    n = len(blob) // 4
+    return list(struct.unpack(f"{n}f", blob)) if n else []
 
 
 class MemoryManager:
@@ -214,6 +230,113 @@ class MemoryManager:
             logger.info("Consolidated %d memory pairs.", len(merges))
         except Exception as exc:
             logger.warning("Memory consolidation failed: %s", exc)
+
+    # ------------------------------------------------------------------
+    # Semantic search
+    # ------------------------------------------------------------------
+
+    async def semantic_search(self, query: str, limit: int = 5) -> list[dict]:
+        """Embedding-based semantic memory search. Falls back to text search if embeddings unavailable."""
+        try:
+            emb = await ollama.embeddings(query[:400])
+            if not emb:
+                raise ValueError("No embedding returned")
+
+            async with get_db() as db:
+                cursor = await db.execute(
+                    "SELECT id, content, emotion_snapshot, tags, created_at, last_accessed, embedding "
+                    "FROM memories WHERE embedding IS NOT NULL "
+                    "ORDER BY COALESCE(importance_score, 0.5) DESC LIMIT 200"
+                )
+                rows = await cursor.fetchall()
+
+            scored = []
+            for row in rows:
+                mem_emb = _unpack(row["embedding"])
+                sim = _cosine_similarity(emb, mem_emb)
+                if sim >= 0.55:
+                    scored.append((sim, row))
+
+            scored.sort(key=lambda x: x[0], reverse=True)
+            top = scored[:limit]
+
+            results = []
+            for _, row in top:
+                await self.update_last_accessed(row["id"])
+                results.append(self._row_to_dict(row))
+            return results
+
+        except Exception as exc:
+            logger.debug("Semantic search fell back to text search: %s", exc)
+            return await self.search_memories(query, limit)
+
+    # ------------------------------------------------------------------
+    # Memory decay
+    # ------------------------------------------------------------------
+
+    async def decay_irrelevant_memories(self) -> int:
+        """
+        Delete memories that are VERY conservatively selected for removal.
+        All conditions must be met: low importance, no edges, old, not protected by tags.
+        """
+        protected_tags = ["creator_profile", "correction", "synthesis"]
+        deleted = 0
+        try:
+            async with get_db() as db:
+                cursor = await db.execute(
+                    "SELECT id, tags FROM memories "
+                    "WHERE COALESCE(importance_score, 0.5) < 0.15 "
+                    "AND julianday('now') - julianday(last_accessed) > 90"
+                )
+                candidates = await cursor.fetchall()
+
+            for row in candidates:
+                tags = row["tags"] or ""
+                if any(pt in tags for pt in protected_tags):
+                    continue
+                # Check no graph edges reference this memory
+                async with get_db() as db:
+                    edge_cursor = await db.execute(
+                        "SELECT COUNT(*) FROM graph_edges WHERE "
+                        "(source_type='memory' AND source_id=?) OR "
+                        "(target_type='memory' AND target_id=?)",
+                        (row["id"], row["id"]),
+                    )
+                    edge_count = (await edge_cursor.fetchone())[0]
+                if edge_count > 0:
+                    continue
+                # Delete this memory
+                async with get_db() as db:
+                    await db.execute("DELETE FROM memories WHERE id = ?", (row["id"],))
+                    await db.commit()
+                deleted += 1
+
+            if deleted:
+                logger.info("Memory decay: deleted %d irrelevant memories.", deleted)
+        except Exception as exc:
+            logger.warning("decay_irrelevant_memories failed: %s", exc)
+
+        return deleted
+
+    # ------------------------------------------------------------------
+    # Correction learning
+    # ------------------------------------------------------------------
+
+    async def store_correction(self, user_msg: str, assistant_response: str, emotion: dict) -> None:
+        """Store a user correction as a high-importance memory."""
+        try:
+            content = f"CORRECTION: User corrected VANTIS. User said: {user_msg[:200]}"
+            mem_id = await self.store_memory(content, emotion, "source:correction,high_priority")
+            if mem_id:
+                async with get_db() as db:
+                    await db.execute(
+                        "UPDATE memories SET importance_score = 0.9 WHERE id = ?",
+                        (mem_id,),
+                    )
+                    await db.commit()
+                logger.info("Stored correction memory id=%d", mem_id)
+        except Exception as exc:
+            logger.warning("store_correction failed: %s", exc)
 
     # ------------------------------------------------------------------
     # Helpers
