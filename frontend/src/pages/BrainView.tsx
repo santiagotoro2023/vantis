@@ -14,7 +14,7 @@ import {
   ReactFlowInstance,
 } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
-import { RefreshCw, Filter, Wifi, WifiOff, LayoutGrid, Circle, Search } from 'lucide-react'
+import { RefreshCw, Filter, Wifi, WifiOff, LayoutGrid, Circle, Search, FileText } from 'lucide-react'
 import { api } from '../api'
 import { useWebSocket } from '../hooks/useWebSocket'
 import EmotionBar from '../components/EmotionBar'
@@ -102,6 +102,11 @@ function ThoughtNode({ data, selected }: NodeProps) {
   const highlighted = d.highlighted as boolean | undefined
   const ttype = (d.thought_type as string) || 'transient'
   const emotions = parseEmotions(d.emotion_state)
+  const score = (d.importance_score as number | undefined) ?? 0.5
+  const color = '#818cf8'
+  const baseWidth = 220
+  const width = Math.round(baseWidth * (0.85 + score * 0.3))
+  const opacity = score < 0.3 ? 0.6 : 1
 
   const typeLabel: Record<string, string> = {
     transient:       'THOUGHT',
@@ -110,13 +115,21 @@ function ThoughtNode({ data, selected }: NodeProps) {
     skill_synthesis: 'SYNTHESIS',
   }
 
+  const glowShadow = highlighted
+    ? '0 0 0 2px #f59e0b'
+    : selected
+    ? '0 0 0 1px rgba(245,158,11,0.3)'
+    : score > 0.7
+    ? `0 0 ${8 + score * 12}px ${color}40`
+    : undefined
+
   return (
     <div
       className={`bg-surface border rounded-lg p-3 shadow-lg transition-transform hover:scale-[1.02] cursor-pointer
         ${isWriting ? 'border-accent animate-[vantis-writing_1.2s_ease-in-out_infinite]' : 'border-thought/40'}
         ${selected ? 'border-l-2 border-l-accent' : ''}
       `}
-      style={{ width: 180, boxShadow: highlighted ? '0 0 0 2px #f59e0b' : selected ? '0 0 0 1px rgba(245,158,11,0.3)' : undefined }}
+      style={{ width, opacity, boxShadow: glowShadow }}
     >
       <Handle type="target" position={Position.Top} className="!bg-thought !border-thought/60 !w-1.5 !h-1.5" />
       <div className="flex items-center justify-between mb-1.5">
@@ -155,13 +168,25 @@ function MemoryNode({ data, selected }: NodeProps) {
     return []
   })()
   const freq = Math.min(8, Math.max(2, Math.round((d.use_count as number || 1) / 2)))
+  const score = (d.importance_score as number | undefined) ?? 0.5
+  const color = '#34d399'
+  const baseWidth = 220
+  const width = Math.round(baseWidth * (0.85 + score * 0.3))
+  const opacity = score < 0.3 ? 0.6 : 1
+  const glowShadow = highlighted
+    ? '0 0 0 2px #f59e0b'
+    : selected
+    ? '0 0 0 1px rgba(245,158,11,0.3)'
+    : score > 0.7
+    ? `0 0 ${8 + score * 12}px ${color}40`
+    : undefined
 
   return (
     <div
       className={`bg-surface border rounded-lg p-3 shadow-lg transition-transform hover:scale-[1.02] cursor-pointer
         border-memory/40 ${selected ? 'border-l-2 border-l-accent' : ''}
       `}
-      style={{ width: 180, boxShadow: highlighted ? '0 0 0 2px #f59e0b' : selected ? '0 0 0 1px rgba(245,158,11,0.3)' : undefined }}
+      style={{ width, opacity, boxShadow: glowShadow }}
     >
       <Handle type="target" position={Position.Top} className="!bg-memory !border-memory/60 !w-1.5 !h-1.5" />
       <div className="flex items-center justify-between mb-1.5">
@@ -199,6 +224,18 @@ function GoalNode({ data, selected }: NodeProps) {
   const progress = (d.progress as number) ?? 0
   const priority = (d.priority as number) || 5
   const priorityDots = Math.round(Math.min(5, priority / 2))
+  const score = (d.importance_score as number | undefined) ?? 0.5
+  const color = '#f59e0b'
+  const baseWidth = 220
+  const width = Math.round(baseWidth * (0.85 + score * 0.3))
+  const opacity = score < 0.3 ? 0.6 : 1
+  const glowShadow = highlighted
+    ? '0 0 0 2px #f59e0b'
+    : selected
+    ? '0 0 0 1px rgba(245,158,11,0.3)'
+    : score > 0.7
+    ? `0 0 ${8 + score * 12}px ${color}40`
+    : undefined
 
   const borderCls = status === 'active' ? 'border-accent/50' : status === 'achieved' ? 'border-memory/50' : 'border-border'
   const headerCls = status === 'active' ? 'text-accent' : status === 'achieved' ? 'text-memory' : 'text-muted'
@@ -208,7 +245,7 @@ function GoalNode({ data, selected }: NodeProps) {
       className={`bg-surface border rounded-lg p-3 shadow-lg transition-transform hover:scale-[1.02] cursor-pointer
         ${borderCls} ${selected ? 'border-l-2 border-l-accent' : ''}
       `}
-      style={{ width: 180, boxShadow: highlighted ? '0 0 0 2px #f59e0b' : selected ? '0 0 0 1px rgba(245,158,11,0.3)' : undefined }}
+      style={{ width, opacity, boxShadow: glowShadow }}
     >
       <Handle type="target" position={Position.Top} className="!w-1.5 !h-1.5" />
       <div className="flex items-center justify-between mb-1.5">
@@ -342,14 +379,16 @@ function CompactNode({ data, selected }: NodeProps) {
   const color = (d.color as string) || NODE_TYPE_COLORS[nodeType] || '#818cf8'
   const label = ((d.name || d.label || d.content) as string || '').slice(0, 60)
   const isWriting = d.isWriting as boolean | undefined
+  const score = (d.importance_score as number | undefined) ?? 0.5
+  const circleSize = Math.round(28 + score * 20) // 28-48px
 
   return (
     <div title={label} style={{ position: 'relative' }}>
       <Handle type="target" position={Position.Top} style={{ opacity: 0 }} />
       <div
         style={{
-          width: 36,
-          height: 36,
+          width: circleSize,
+          height: circleSize,
           borderRadius: '50%',
           backgroundColor: `${color}22`,
           border: `2px solid ${color}${selected ? 'cc' : '55'}`,
@@ -452,6 +491,8 @@ export default function BrainView() {
   const [compactMode, setCompactMode] = useState(false)
   const [hiddenTypes, setHiddenTypes] = useState<Set<string>>(new Set())
   const [brainStats, setBrainStats] = useState<{ thought_count: number; memory_count: number; active_goals: number } | null>(null)
+  const [brainSummary, setBrainSummary] = useState<{ summary: string; stats: Record<string, number>; generated_at: string } | null>(null)
+  const [summaryOpen, setSummaryOpen] = useState(false)
   const [searchQuery, setSearchQuery] = useState('')
   const [highlightedIds, setHighlightedIds] = useState<Set<string>>(new Set())
   const searchTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -520,7 +561,16 @@ export default function BrainView() {
 
   useEffect(() => {
     loadGraph()
-    api.getBrainSummary().then(setBrainStats).catch(() => {})
+    api.getBrainSummary().then(d => {
+      setBrainStats({ thought_count: d.thought_count, memory_count: d.memory_count, active_goals: d.active_goals })
+      if (d.summary && d.generated_at) {
+        setBrainSummary({
+          summary: d.summary,
+          stats: d.stats || { thought_count: d.thought_count, memory_count: d.memory_count, active_goals: d.active_goals, edge_count: 0 },
+          generated_at: d.generated_at,
+        })
+      }
+    }).catch(() => {})
   }, [])
 
   useEffect(() => {
@@ -938,6 +988,30 @@ export default function BrainView() {
                 </div>
               </div>
             )}
+
+            {/* Self-report widget */}
+            <div className="mt-5">
+              <button
+                onClick={() => setSummaryOpen(!summaryOpen)}
+                className="text-xs font-mono text-muted hover:text-accent flex items-center gap-1 transition-colors"
+              >
+                <FileText size={10} /> SELF-REPORT
+              </button>
+              {summaryOpen && brainSummary && (
+                <div className="mt-2 p-2 border border-border bg-panel rounded text-[10px] font-mono text-muted space-y-1 max-h-48 overflow-y-auto">
+                  <div className="text-accent text-[9px] uppercase tracking-wider mb-1">Brain State</div>
+                  <div>{brainSummary.stats.thought_count} thoughts · {brainSummary.stats.memory_count} memories</div>
+                  <div>{brainSummary.stats.active_goals} active goals · {brainSummary.stats.edge_count} connections</div>
+                  <div className="border-t border-border pt-1 mt-1 leading-relaxed">{brainSummary.summary.slice(0, 300)}...</div>
+                  <div className="text-muted/50">Generated {new Date(brainSummary.generated_at).toLocaleTimeString()}</div>
+                </div>
+              )}
+              {summaryOpen && !brainSummary && (
+                <div className="mt-2 p-2 border border-border bg-panel rounded text-[10px] font-mono text-muted/50">
+                  No summary available.
+                </div>
+              )}
+            </div>
           </div>
         </div>
       </div>

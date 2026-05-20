@@ -149,4 +149,71 @@ export const api = {
   deleteSkill: (id: number) => request(`/skills/${id}`, { method: 'DELETE' }),
   executeSkill: (id: number, args: string[] = []) =>
     request(`/skills/${id}/execute`, { method: 'POST', body: JSON.stringify({ args }) }),
+
+  streamMessage: (
+    content: string,
+    sessionId?: string,
+    model?: 'primary' | 'omega',
+    onToken?: (token: string) => void,
+    onDone?: (fullText: string, sessionId: string) => void,
+    onError?: (err: Error) => void,
+  ): AbortController => {
+    const ctrl = new AbortController()
+    const token = localStorage.getItem('vantis_token')
+
+    fetch('/api/chat/stream', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+      body: JSON.stringify({ content, session_id: sessionId, model }),
+      signal: ctrl.signal,
+    }).then(async res => {
+      if (!res.ok) throw new Error(`Stream error: ${res.status}`)
+      if (!res.body) throw new Error('No response body')
+      const reader = res.body.getReader()
+      const decoder = new TextDecoder()
+      let buffer = ''
+      let resolvedSessionId = sessionId || ''
+      while (true) {
+        const { done, value } = await reader.read()
+        if (done) break
+        buffer += decoder.decode(value, { stream: true })
+        const lines = buffer.split('\n')
+        buffer = lines.pop() || ''
+        for (const line of lines) {
+          if (line.startsWith('data: ')) {
+            try {
+              const data = JSON.parse(line.slice(6))
+              if (data.token) onToken?.(data.token)
+              if (data.session_id) resolvedSessionId = data.session_id
+              if (data.done) onDone?.(data.full_text || '', resolvedSessionId)
+            } catch {}
+          }
+        }
+      }
+    }).catch(err => {
+      if (err.name !== 'AbortError') onError?.(err)
+    })
+
+    return ctrl
+  },
+
+  speak: (text: string): Promise<void> =>
+    fetch('/api/tts/speak', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(localStorage.getItem('vantis_token') ? { Authorization: `Bearer ${localStorage.getItem('vantis_token')}` } : {}),
+      },
+      body: JSON.stringify({ text }),
+    }).then(async res => {
+      if (!res.ok) throw new Error('TTS failed')
+      const blob = await res.blob()
+      const url = URL.createObjectURL(blob)
+      const audio = new Audio(url)
+      audio.onended = () => URL.revokeObjectURL(url)
+      await audio.play()
+    }),
 }

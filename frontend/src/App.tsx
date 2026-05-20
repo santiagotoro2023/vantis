@@ -12,6 +12,7 @@ import NetworkView from './pages/NetworkView'
 import SkillsView from './pages/SkillsView'
 import UpdatePage from './pages/UpdatePage'
 import { useWebSocket } from './hooks/useWebSocket'
+import { useKeyboardShortcuts } from './hooks/useKeyboardShortcuts'
 import type { WsMessage } from './types'
 import Layout from './components/Layout'
 
@@ -36,6 +37,7 @@ function ProtectedApp() {
   }, [])
 
   useWebSocket(handleWs)
+  useKeyboardShortcuts()
 
   return (
     <Layout role={role} notification={notification}>

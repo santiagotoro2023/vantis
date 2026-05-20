@@ -11,12 +11,12 @@ interface Props {
 }
 
 const NAV = [
-  { to: '/brain', icon: Brain, label: 'Brain' },
-  { to: '/chat', icon: MessageSquare, label: 'Chat' },
-  { to: '/monologue', icon: Activity, label: 'Monologue' },
-  { to: '/goals', icon: Target, label: 'Goals' },
-  { to: '/skills', icon: Zap, label: 'Skills' },
-  { to: '/sandbox', icon: Terminal, label: 'Sandbox' },
+  { to: '/brain', icon: Brain, label: 'Brain', key: 'B' },
+  { to: '/chat', icon: MessageSquare, label: 'Chat', key: 'C' },
+  { to: '/monologue', icon: Activity, label: 'Monologue', key: 'M' },
+  { to: '/goals', icon: Target, label: 'Goals', key: 'G' },
+  { to: '/skills', icon: Zap, label: 'Skills', key: 'S' },
+  { to: '/sandbox', icon: Terminal, label: 'Sandbox', key: '' },
 ]
 
 const ADMIN_NAV = [
@@ -24,6 +24,15 @@ const ADMIN_NAV = [
   { to: '/admin/personality', icon: Settings, label: 'Personality' },
   { to: '/admin/users', icon: Users, label: 'Users' },
   { to: '/admin/update', icon: Download, label: 'Update' },
+]
+
+// 5 most important nav items for mobile bottom bar
+const MOBILE_NAV = [
+  { to: '/chat', icon: MessageSquare, label: 'Chat' },
+  { to: '/brain', icon: Brain, label: 'Brain' },
+  { to: '/goals', icon: Target, label: 'Goals' },
+  { to: '/skills', icon: Zap, label: 'Skills' },
+  { to: '/admin/personality', icon: Settings, label: 'Admin' },
 ]
 
 export default function Layout({ children, role, notification }: Props) {
@@ -37,8 +46,8 @@ export default function Layout({ children, role, notification }: Props) {
 
   return (
     <div className="flex h-screen bg-void overflow-hidden">
-      {/* Sidebar */}
-      <nav className="w-14 bg-surface border-r border-border flex flex-col items-center py-3 gap-0.5 shrink-0 relative">
+      {/* Sidebar — desktop only */}
+      <nav className="hidden md:flex w-14 bg-surface border-r border-border flex-col items-center py-3 gap-0.5 shrink-0 relative">
         {/* Amber top accent line */}
         <div className="absolute top-0 left-0 right-0 h-px bg-accent opacity-60" />
 
@@ -110,6 +119,10 @@ export default function Layout({ children, role, notification }: Props) {
           >
             <LogOut size={16} />
           </button>
+          {/* Keyboard shortcut hints */}
+          <div className="mt-2 mb-1 text-[7px] font-mono text-muted/30 tracking-widest text-center leading-relaxed select-none">
+            C·B·G<br/>S·M
+          </div>
         </div>
 
         {/* Bottom accent line */}
@@ -117,7 +130,7 @@ export default function Layout({ children, role, notification }: Props) {
       </nav>
 
       {/* Main content */}
-      <div className="flex-1 flex flex-col overflow-hidden">
+      <div className="flex-1 flex flex-col overflow-hidden min-w-0">
         {notification && (
           <div className="border-b border-accent/40 bg-accent/5 px-4 py-2 text-xs text-accent font-mono
                           flex items-center gap-2 hazard-stripe">
@@ -125,8 +138,34 @@ export default function Layout({ children, role, notification }: Props) {
             <span className="text-text">{notification}</span>
           </div>
         )}
-        <main className="flex-1 overflow-auto">{children}</main>
+        <main className="flex-1 overflow-auto pb-14 md:pb-0">{children}</main>
       </div>
+
+      {/* Mobile bottom nav */}
+      <nav className="flex md:hidden fixed bottom-0 left-0 right-0 border-t border-border bg-surface z-50">
+        {MOBILE_NAV.map(({ to, icon: Icon, label }) => (
+          <Link
+            key={to}
+            to={to}
+            className={clsx(
+              'flex-1 flex flex-col items-center justify-center py-2 gap-0.5 transition-colors',
+              loc.pathname.startsWith(to)
+                ? 'text-accent'
+                : 'text-muted hover:text-text'
+            )}
+          >
+            <Icon size={18} />
+            <span className="text-[9px] font-mono tracking-wider">{label.toUpperCase()}</span>
+          </Link>
+        ))}
+        <button
+          onClick={logout}
+          className="flex-1 flex flex-col items-center justify-center py-2 gap-0.5 text-muted hover:text-danger transition-colors"
+        >
+          <LogOut size={18} />
+          <span className="text-[9px] font-mono tracking-wider">OUT</span>
+        </button>
+      </nav>
     </div>
   )
 }
