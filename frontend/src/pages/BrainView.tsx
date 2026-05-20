@@ -120,7 +120,7 @@ function ThoughtNode({ data, selected }: NodeProps) {
       <Handle type="target" position={Position.Top} className="!bg-thought !border-thought/60 !w-1.5 !h-1.5" />
       <div className="flex items-center justify-between mb-1.5">
         <span className="text-[9px] font-mono text-thought tracking-widest">{typeLabel[ttype] || 'THOUGHT'}</span>
-        {d.created_at && !isWriting && (
+        {!!(d.created_at) && !isWriting && (
           <span className="text-[9px] font-mono text-muted/60">{timeAgo(d.created_at as string)}</span>
         )}
       </div>
@@ -182,7 +182,7 @@ function MemoryNode({ data, selected }: NodeProps) {
         {((d.label || d.content) as string || '').length > 80 ? '...' : ''}
       </div>
       <EmotionMiniBars emotions={emotions} />
-      {d.created_at && (
+      {!!(d.created_at) && (
         <div className="text-[9px] font-mono text-muted/60 mt-1.5">{timeAgo(d.created_at as string)}</div>
       )}
       <Handle type="source" position={Position.Bottom} className="!bg-memory !border-memory/60 !w-1.5 !h-1.5" />
@@ -271,7 +271,7 @@ function SystemNode({ data, selected }: NodeProps) {
       <Handle type="target" position={Position.Top} className="!bg-pink-500 !border-pink-500/60 !w-1.5 !h-1.5" />
       <div className="flex items-center justify-between mb-1.5">
         <span className="text-[9px] font-mono text-pink-400 tracking-widest">SYSTEM</span>
-        {d.version && <span className="text-[9px] font-mono text-muted">v{d.version as string}</span>}
+        {!!(d.version) && <span className="text-[9px] font-mono text-muted">v{d.version as string}</span>}
       </div>
       <div className="text-[11px] text-text leading-relaxed line-clamp-3">{(d.label || d.content) as string}</div>
       <Handle type="source" position={Position.Bottom} className="!bg-pink-500 !border-pink-500/60 !w-1.5 !h-1.5" />
@@ -295,10 +295,10 @@ function ConversationNode({ data, selected }: NodeProps) {
         <span className="text-[9px] font-mono text-muted">{(d.message_count as number) || 0} msgs</span>
       </div>
       <div className="text-[10px] font-mono text-muted mb-1.5">{sessionId.slice(0, 8)}</div>
-      {d.last_message && (
+      {!!(d.last_message) && (
         <div className="text-[10px] text-muted/80 line-clamp-2 italic">{(d.last_message as string).slice(0, 60)}</div>
       )}
-      {d.started && (
+      {!!(d.started) && (
         <div className="text-[9px] font-mono text-muted/50 mt-1.5">{timeAgo(d.started as string)}</div>
       )}
       <Handle type="source" position={Position.Bottom} className="!bg-blue-400 !border-blue-400/60 !w-1.5 !h-1.5" />
@@ -399,7 +399,7 @@ export default function BrainView() {
   const [newNodeIds, setNewNodeIds] = useState<Set<string>>(new Set())
 
   const allNodesRef = useRef<Node[]>([])
-  const rfInstanceRef = useRef<ReactFlowInstance | null>(null)
+  const rfInstanceRef = useRef<ReactFlowInstance<any, any> | null>(null)
 
   // Derive isAdmin from token (simple check - any logged-in user with role)
   const isAdmin = (() => {

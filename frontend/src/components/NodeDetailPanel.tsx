@@ -6,7 +6,7 @@ import type { EmotionState, ConversationMessage } from '../types'
 interface NodeDetailPanelProps {
   node: {
     id: string
-    type: string
+    type?: string
     data: Record<string, unknown>
   } | null
   onClose: () => void
@@ -166,7 +166,7 @@ function ThoughtPanel({
     <div className="space-y-4">
       <div className="flex items-center gap-2 flex-wrap">
         <Badge color={typeColorMap[ttype] ?? 'violet'}>{ttype.toUpperCase()}</Badge>
-        {data.created_at && (
+        {!!(data.created_at) && (
           <span className="text-[10px] font-mono text-muted">{timeAgo(data.created_at as string)}</span>
         )}
       </div>
@@ -203,7 +203,7 @@ function ThoughtPanel({
         <EmotionBars emotions={emotions} />
       </div>
 
-      {data.created_at && (
+      {!!(data.created_at) && (
         <div className="text-[10px] font-mono text-muted">
           CREATED: {new Date(data.created_at as string).toLocaleString()}
         </div>
@@ -279,8 +279,8 @@ function MemoryPanel({
       </div>
 
       <div className="space-y-1 text-[10px] font-mono text-muted">
-        {data.created_at && <div>CREATED: {new Date(data.created_at as string).toLocaleString()}</div>}
-        {data.last_accessed && <div>LAST ACCESSED: {new Date(data.last_accessed as string).toLocaleString()}</div>}
+        {!!(data.created_at) && <div>CREATED: {new Date(data.created_at as string).toLocaleString()}</div>}
+        {!!(data.last_accessed) && <div>LAST ACCESSED: {new Date(data.last_accessed as string).toLocaleString()}</div>}
       </div>
     </div>
   )
@@ -568,7 +568,7 @@ function SkillPanel({
       )}
 
       <div className="space-y-1 text-[10px] font-mono text-muted">
-        {data.last_used && <div>LAST USED: {new Date(data.last_used as string).toLocaleString()}</div>}
+        {!!(data.last_used) && <div>LAST USED: {new Date(data.last_used as string).toLocaleString()}</div>}
       </div>
     </div>
   )
@@ -578,7 +578,7 @@ function SystemPanel({ data }: { data: Record<string, unknown> }) {
   return (
     <div className="space-y-4">
       <div className="flex items-center gap-2">
-        <Badge color="pink">v{data.version || '?'}</Badge>
+        <Badge color="pink">v{String(data.version ?? '?')}</Badge>
         <span className="text-[10px] font-mono text-muted">ACTIVE PERSONALITY VERSION</span>
       </div>
 

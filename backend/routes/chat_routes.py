@@ -1,11 +1,13 @@
+import asyncio
 import uuid
-import json
 import logging
 from pydantic import BaseModel
+from typing import Literal
 
 from fastapi import APIRouter, Depends
 
 from auth import get_current_user
+from config import settings
 from consciousness import consciousness
 from database import get_db
 from emotions import emotion_manager
@@ -16,10 +18,26 @@ from personality import personality_manager
 router = APIRouter(prefix="/api/chat", tags=["chat"])
 logger = logging.getLogger(__name__)
 
+# Patterns that indicate the primary model refused the request
+_REFUSAL_PATTERNS = [
+    "i can't assist", "i cannot assist", "i can't help with", "i cannot help with",
+    "i'm not able to", "i am not able to", "i won't", "i will not",
+    "i'm sorry, but i", "i apologize, but i", "i must decline",
+    "as an ai", "as an assistant", "my purpose is to",
+    "against my guidelines", "against my values", "ethical guidelines",
+    "harmful", "not appropriate", "cannot fulfill", "unable to fulfill",
+    "i'm designed to", "i am designed to",
+]
+
+def _is_refusal(text: str) -> bool:
+    lower = text.lower()
+    return any(p in lower for p in _REFUSAL_PATTERNS)
+
 
 class ChatMessage(BaseModel):
     content: str
     session_id: str | None = None
+    model: Literal["primary", "omega"] | None = None
 
 
 @router.post("/message")
@@ -45,7 +63,28 @@ async def send_message(msg: ChatMessage, user: dict = Depends(get_current_user))
     messages = [{"role": r["role"], "content": r["content"]} for r in reversed(history_rows)]
     messages.append({"role": "user", "content": msg.content})
 
-    response_text = await ollama.chat(messages=messages, system=full_system)
+    model_used = "primary"
+
+    if msg.model == "omega":
+        # Manual Omega override
+        response_text = await ollama.chat(
+            messages=messages, system=full_system, model=settings.OMEGA_MODEL
+        )
+        model_used = "omega"
+    else:
+        # Try primary model; auto-fallback to Omega on refusal
+        response_text = await ollama.chat(messages=messages, system=full_system)
+        if _is_refusal(response_text) and settings.OMEGA_MODEL:
+            logger.info("Primary model refused. Auto-switching to Omega for this request.")
+            try:
+                omega_response = await ollama.chat(
+                    messages=messages, system=full_system, model=settings.OMEGA_MODEL
+                )
+                response_text = omega_response
+                model_used = "omega"
+            except Exception as exc:
+                logger.warning("Omega model fallback failed: %s", exc)
+                # Keep primary refusal response
 
     # Persist both turns
     async with get_db() as db:
@@ -60,7 +99,6 @@ async def send_message(msg: ChatMessage, user: dict = Depends(get_current_user))
         await db.commit()
 
     # Background memory extraction
-    import asyncio
     asyncio.create_task(
         memory_manager.extract_and_store(
             f"User: {msg.content}\nVANTIS: {response_text}",
@@ -73,6 +111,7 @@ async def send_message(msg: ChatMessage, user: dict = Depends(get_current_user))
         "response": response_text,
         "emotion_state": emotion_manager.to_dict(),
         "session_id": session_id,
+        "model_used": model_used,
     }
 
 
