@@ -9,6 +9,7 @@ interface Message {
   role: 'user' | 'assistant'
   content: string
   timestamp: string
+  model_used?: string
 }
 
 export default function Chat() {
@@ -17,6 +18,7 @@ export default function Chat() {
   const [loading, setLoading] = useState(false)
   const [sessionId, setSessionId] = useState<string | undefined>()
   const [emotions, setEmotions] = useState<Partial<EmotionState>>({})
+  const [modelOverride, setModelOverride] = useState<'primary' | 'omega'>('primary')
   const messagesEndRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -38,13 +40,14 @@ export default function Chat() {
     setMessages(prev => [...prev, { role: 'user', content: userMsg, timestamp: new Date().toISOString() }])
     setLoading(true)
     try {
-      const res = await api.sendMessage(userMsg, sessionId)
+      const res = await api.sendMessage(userMsg, sessionId, modelOverride === 'primary' ? undefined : modelOverride)
       setSessionId(res.session_id)
       setEmotions(res.emotion_state)
       setMessages(prev => [...prev, {
         role: 'assistant',
         content: res.response,
         timestamp: new Date().toISOString(),
+        model_used: res.model_used,
       }])
     } catch (err) {
       setMessages(prev => [...prev, {
@@ -79,12 +82,30 @@ export default function Chat() {
           {sessionId && (
             <span className="text-xs text-muted font-mono">session: {sessionId.slice(0, 8)}...</span>
           )}
-          <button
-            onClick={newSession}
-            className="ml-auto text-muted hover:text-text transition-colors flex items-center gap-1 text-xs"
-          >
-            <Plus size={12} /> New
-          </button>
+          <div className="ml-auto flex items-center gap-2">
+            <div className="flex items-center border border-border rounded overflow-hidden text-[10px] font-mono">
+              <button
+                onClick={() => setModelOverride('primary')}
+                className={`px-2 py-1 transition-colors ${modelOverride === 'primary' ? 'bg-accent/20 text-accent border-r border-border' : 'text-muted hover:text-text border-r border-border'}`}
+                title="Primary model"
+              >
+                PRIMARY
+              </button>
+              <button
+                onClick={() => setModelOverride('omega')}
+                className={`px-2 py-1 transition-colors ${modelOverride === 'omega' ? 'bg-red-500/20 text-red-400' : 'text-muted hover:text-text'}`}
+                title="Omega Darker — unrestricted model"
+              >
+                OMEGA
+              </button>
+            </div>
+            <button
+              onClick={newSession}
+              className="text-muted hover:text-text transition-colors flex items-center gap-1 text-xs"
+            >
+              <Plus size={12} /> New
+            </button>
+          </div>
         </div>
 
         <div className="flex-1 overflow-y-auto p-4 space-y-4">
@@ -105,7 +126,12 @@ export default function Chat() {
                 }`}
               >
                 {msg.role === 'assistant' && (
-                  <div className="text-xs text-accent font-mono mb-1">VANTIS</div>
+                  <div className="flex items-center gap-2 mb-1">
+                    <span className="text-xs text-accent font-mono">VANTIS</span>
+                    {msg.model_used === 'omega' && (
+                      <span className="text-[9px] font-mono px-1 py-0.5 bg-red-500/15 border border-red-500/30 text-red-400 tracking-wider">OMEGA</span>
+                    )}
+                  </div>
                 )}
                 <div className="whitespace-pre-wrap">{msg.content}</div>
                 <div className="text-xs text-muted mt-1.5">

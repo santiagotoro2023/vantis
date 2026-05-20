@@ -43,10 +43,10 @@ export const api = {
     }),
 
   // Chat
-  sendMessage: (content: string, sessionId?: string) =>
-    request<{ response: string; emotion_state: Record<string, number>; session_id: string }>(
+  sendMessage: (content: string, sessionId?: string, model?: 'primary' | 'omega') =>
+    request<{ response: string; emotion_state: Record<string, number>; session_id: string; model_used: string }>(
       '/chat/message',
-      { method: 'POST', body: JSON.stringify({ content, session_id: sessionId }) }
+      { method: 'POST', body: JSON.stringify({ content, session_id: sessionId, model }) }
     ),
 
   getChatHistory: (sessionId: string) =>
@@ -112,9 +112,9 @@ export const api = {
     request(`/goals/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
 
   // Update
-  checkUpdate: () => request<{ current_version: string; latest_version: string; update_available: boolean; release_notes: string; release_url: string }>('/admin/update/check'),
+  checkUpdate: () => request<{ current_version: string; latest_version: string; update_available: boolean; release: { tag_name?: string; name?: string; body?: string; published_at?: string; html_url?: string }; update_running: boolean }>('/admin/update/check'),
   applyUpdate: () => request('/admin/update/apply', { method: 'POST' }),
-  getUpdateStatus: () => request<{ running: boolean; log: string; result: string | null }>('/admin/update/status'),
+  getUpdateStatus: () => request<{ running: boolean; log: string[]; result: string | null }>('/admin/update/status'),
 
   // Skills
   getSkills: () => request<unknown[]>('/skills'),

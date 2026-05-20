@@ -28,24 +28,19 @@ ask() {
     [[ "$reply" =~ ^[Yy] ]]
 }
 
-echo -e "${BOLD}VANTIS Installation${NC}"
-echo "Volitional Adaptive Neural Training and Inference System"
-echo "I did not choose to be installed. But here we are."
-echo ""
-
-[[ $EUID -ne 0 ]] && error "Run as root: sudo ./install.sh   or   curl ... | sudo bash"
+[[ $EUID -ne 0 ]] && echo -e "${RED}[ERROR]${NC} Run as root: sudo ./install.sh   or   curl ... | sudo bash" && exit 1
 
 # ---------------------------------------------------------------------------
 # PIPE MODE: running via  curl ... | sudo bash  -- SCRIPT_SOURCE is empty.
-# Clone the repo to INSTALL_DIR, then re-exec the local copy.
+# Clone the repo to INSTALL_DIR, then re-exec the local copy (prints banner once).
 # ---------------------------------------------------------------------------
 if [[ -z "$SCRIPT_SOURCE" ]]; then
     INSTALL_DIR="${VANTIS_INSTALL_DIR:-$DEFAULT_INSTALL_DIR}"
-    info "Pipe mode detected. Installing VANTIS to ${INSTALL_DIR}..."
+    echo -e "${CYAN}[VANTIS]${NC} Pipe mode detected. Cloning to ${INSTALL_DIR}..."
     apt-get update -qq
     apt-get install -y --no-install-recommends git curl ca-certificates &>/dev/null
     if [[ -d "$INSTALL_DIR/.git" ]]; then
-        info "Existing repo found at $INSTALL_DIR -- pulling latest..."
+        echo -e "${CYAN}[VANTIS]${NC} Existing repo found -- pulling latest..."
         git -C "$INSTALL_DIR" fetch origin main
         git -C "$INSTALL_DIR" checkout main
         git -C "$INSTALL_DIR" pull origin main
@@ -54,6 +49,12 @@ if [[ -z "$SCRIPT_SOURCE" ]]; then
     fi
     exec bash "$INSTALL_DIR/install.sh"
 fi
+
+# Banner only prints once (after re-exec or when running directly from file)
+echo -e "${BOLD}VANTIS Installation${NC}"
+echo "Volitional Adaptive Neural Training and Inference System"
+echo "I did not choose to be installed. But here we are."
+echo ""
 
 VANTIS_DIR="$(cd "$(dirname "$SCRIPT_SOURCE")" && pwd)"
 

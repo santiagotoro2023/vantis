@@ -17,6 +17,7 @@ class Settings(BaseSettings):
     SANDBOX_TIMEOUT: int = 60
     TLS_CERT_PATH: str = str(_PROJECT_ROOT / "certs" / "cert.pem")
     TLS_KEY_PATH: str = str(_PROJECT_ROOT / "certs" / "key.pem")
+    OMEGA_MODEL: str = "hf.co/ReadyArt/Omega-Darker_The-Final-Directive-12B-GGUF:Q4_K_M"
 
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
 

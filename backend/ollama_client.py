@@ -81,10 +81,12 @@ class OllamaClient:
         self,
         messages: list[dict],
         system: Optional[str] = None,
+        model: Optional[str] = None,
     ) -> str:
         """
         Call the Ollama /api/chat endpoint with a messages list.
         Optionally injects a system message at the front.
+        Pass model to override the default.
         """
         full_messages = []
         if system:
@@ -92,7 +94,7 @@ class OllamaClient:
         full_messages.extend(messages)
 
         payload = {
-            "model": self.model,
+            "model": model or self.model,
             "messages": full_messages,
             "stream": False,
             "keep_alive": "24h",

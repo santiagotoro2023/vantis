@@ -14,7 +14,7 @@ interface UpdateStatus {
 interface UpdateProgress {
   running: boolean
   log: string[]
-  result: 'success' | 'failed' | null
+  result: string | null
 }
 
 export default function UpdatePage() {
@@ -28,7 +28,7 @@ export default function UpdatePage() {
   const check = async () => {
     setChecking(true)
     try {
-      const data = await api.checkUpdate() as UpdateStatus
+      const data = await api.checkUpdate()
       setStatus(data)
     } finally {
       setChecking(false)
