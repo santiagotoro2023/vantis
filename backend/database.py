@@ -165,8 +165,35 @@ async def init_db() -> None:
             )
         """)
 
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS scheduled_skill_runs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                skill_id INTEGER NOT NULL REFERENCES skills(id),
+                last_run TEXT,
+                next_run TEXT
+            )
+        """)
+
         await db.commit()
+
+        # Migration-safe column additions
+        await _add_column_if_missing(db, "memories", "importance_score", "REAL NOT NULL DEFAULT 0.5")
+        await _add_column_if_missing(db, "conversation_sessions", "name", "TEXT")
+        await _add_column_if_missing(db, "thoughts", "importance_score", "REAL NOT NULL DEFAULT 0.5")
+        await _add_column_if_missing(db, "goals", "parent_goal_id", "INTEGER REFERENCES goals(id)")
+
+        await db.commit()
+
     logger.info("Database initialised.")
+
+
+async def _add_column_if_missing(db, table: str, col: str, definition: str) -> None:
+    """Migration-safe column addition using PRAGMA table_info."""
+    cursor = await db.execute(f"PRAGMA table_info({table})")
+    cols = [r[1] for r in await cursor.fetchall()]
+    if col not in cols:
+        await db.execute(f"ALTER TABLE {table} ADD COLUMN {col} {definition}")
+        logger.info("Added column %s.%s", table, col)
 
 
 @asynccontextmanager
@@ -199,4 +226,8 @@ async def ensure_skills_table() -> None:
                 author TEXT DEFAULT 'vantis'
             )
         """)
+        await db.commit()
+        # Migration-safe: add schedule and last_scheduled_run columns
+        await _add_column_if_missing(db, "skills", "schedule", "TEXT")
+        await _add_column_if_missing(db, "skills", "last_scheduled_run", "TEXT")
         await db.commit()
