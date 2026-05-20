@@ -21,13 +21,14 @@ GOAL_GENERATION_SYSTEM = (
 class GoalManager:
 
     async def create_goal(
-        self, description: str, priority: int = 5, source_thought_id: Optional[int] = None
+        self, description: str, priority: int = 5, source_thought_id: Optional[int] = None,
+        owner: str = 'system',
     ) -> int:
         async with get_db() as db:
             cursor = await db.execute(
-                "INSERT INTO goals (description, priority, created_at, updated_at) "
-                "VALUES (?, ?, datetime('now'), datetime('now'))",
-                (description, priority),
+                "INSERT INTO goals (description, priority, owner, created_at, updated_at) "
+                "VALUES (?, ?, ?, datetime('now'), datetime('now'))",
+                (description, priority, owner),
             )
             await db.commit()
             goal_id = cursor.lastrowid

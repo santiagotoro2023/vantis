@@ -176,11 +176,38 @@ async def init_db() -> None:
 
         await db.commit()
 
+        # New tables: api_keys, audit_log
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS api_keys (
+                key_hash TEXT PRIMARY KEY,
+                label TEXT NOT NULL,
+                owner TEXT NOT NULL,
+                role TEXT NOT NULL DEFAULT 'user',
+                created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                last_used TEXT
+            )
+        """)
+
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS audit_log (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                actor TEXT NOT NULL,
+                action TEXT NOT NULL,
+                details TEXT,
+                timestamp TEXT NOT NULL DEFAULT (datetime('now'))
+            )
+        """)
+
+        await db.commit()
+
         # Migration-safe column additions
         await _add_column_if_missing(db, "memories", "importance_score", "REAL NOT NULL DEFAULT 0.5")
-        await _add_column_if_missing(db, "conversation_sessions", "name", "TEXT")
-        await _add_column_if_missing(db, "thoughts", "importance_score", "REAL NOT NULL DEFAULT 0.5")
+        await _add_column_if_missing(db, "memories", "owner", "TEXT NOT NULL DEFAULT 'system'")
         await _add_column_if_missing(db, "goals", "parent_goal_id", "INTEGER REFERENCES goals(id)")
+        await _add_column_if_missing(db, "goals", "owner", "TEXT NOT NULL DEFAULT 'system'")
+        await _add_column_if_missing(db, "conversation_sessions", "name", "TEXT")
+        await _add_column_if_missing(db, "conversation_sessions", "owner", "TEXT")
+        await _add_column_if_missing(db, "thoughts", "importance_score", "REAL NOT NULL DEFAULT 0.5")
 
         await db.commit()
 

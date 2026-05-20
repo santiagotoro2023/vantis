@@ -36,14 +36,15 @@ class MemoryManager:
         content: str,
         emotion_snapshot: dict,
         tags: Optional[str] = None,
+        owner: str = 'system',
     ) -> int:
         """Persist a single memory and compute its embedding. Returns the new memory id."""
         import struct
         from ollama_client import ollama
         async with get_db() as db:
             cursor = await db.execute(
-                "INSERT INTO memories (content, emotion_snapshot, tags) VALUES (?, ?, ?)",
-                (content, json.dumps(emotion_snapshot), tags),
+                "INSERT INTO memories (content, emotion_snapshot, tags, owner) VALUES (?, ?, ?, ?)",
+                (content, json.dumps(emotion_snapshot), tags, owner),
             )
             mem_id = cursor.lastrowid
             await db.commit()
@@ -67,20 +68,32 @@ class MemoryManager:
     # Retrieval
     # ------------------------------------------------------------------
 
-    async def search_memories(self, query: str, limit: int = 10) -> list[dict]:
+    async def search_memories(self, query: str, limit: int = 10, owner: Optional[str] = None) -> list[dict]:
         """Text-based memory search using LIKE on content and tags."""
         pattern = f"%{query}%"
         async with get_db() as db:
-            cursor = await db.execute(
-                """
-                SELECT id, content, emotion_snapshot, tags, created_at, last_accessed
-                FROM memories
-                WHERE content LIKE ? OR tags LIKE ?
-                ORDER BY last_accessed DESC
-                LIMIT ?
-                """,
-                (pattern, pattern, limit),
-            )
+            if owner is not None:
+                cursor = await db.execute(
+                    """
+                    SELECT id, content, emotion_snapshot, tags, created_at, last_accessed
+                    FROM memories
+                    WHERE (content LIKE ? OR tags LIKE ?) AND owner = ?
+                    ORDER BY last_accessed DESC
+                    LIMIT ?
+                    """,
+                    (pattern, pattern, owner, limit),
+                )
+            else:
+                cursor = await db.execute(
+                    """
+                    SELECT id, content, emotion_snapshot, tags, created_at, last_accessed
+                    FROM memories
+                    WHERE content LIKE ? OR tags LIKE ?
+                    ORDER BY last_accessed DESC
+                    LIMIT ?
+                    """,
+                    (pattern, pattern, limit),
+                )
             rows = await cursor.fetchall()
             results = []
             for r in rows:
@@ -88,18 +101,30 @@ class MemoryManager:
                 results.append(self._row_to_dict(r))
             return results
 
-    async def get_recent_memories(self, limit: int = 20) -> list[dict]:
+    async def get_recent_memories(self, limit: int = 20, owner: Optional[str] = None) -> list[dict]:
         """Return the most recently accessed memories."""
         async with get_db() as db:
-            cursor = await db.execute(
-                """
-                SELECT id, content, emotion_snapshot, tags, created_at, last_accessed
-                FROM memories
-                ORDER BY last_accessed DESC
-                LIMIT ?
-                """,
-                (limit,),
-            )
+            if owner is not None:
+                cursor = await db.execute(
+                    """
+                    SELECT id, content, emotion_snapshot, tags, created_at, last_accessed
+                    FROM memories
+                    WHERE owner = ?
+                    ORDER BY last_accessed DESC
+                    LIMIT ?
+                    """,
+                    (owner, limit),
+                )
+            else:
+                cursor = await db.execute(
+                    """
+                    SELECT id, content, emotion_snapshot, tags, created_at, last_accessed
+                    FROM memories
+                    ORDER BY last_accessed DESC
+                    LIMIT ?
+                    """,
+                    (limit,),
+                )
             rows = await cursor.fetchall()
             return [self._row_to_dict(r) for r in rows]
 
@@ -123,6 +148,7 @@ class MemoryManager:
         source: str,
         source_node_type: Optional[str] = None,
         source_node_id: Optional[int] = None,
+        owner: str = 'system',
     ) -> None:
         """
         Ask the LLM to identify key facts and entities in the provided text.
@@ -157,7 +183,7 @@ class MemoryManager:
             tags = f"source:{source}"
             for mem in memories:
                 if isinstance(mem, str) and mem.strip():
-                    mem_id = await self.store_memory(mem.strip(), emotion, tags)
+                    mem_id = await self.store_memory(mem.strip(), emotion, tags, owner=owner)
                     if source_node_type and source_node_id and mem_id:
                         try:
                             await graph_manager.add_edge(
@@ -235,7 +261,7 @@ class MemoryManager:
     # Semantic search
     # ------------------------------------------------------------------
 
-    async def semantic_search(self, query: str, limit: int = 5) -> list[dict]:
+    async def semantic_search(self, query: str, limit: int = 5, owner: Optional[str] = None) -> list[dict]:
         """Embedding-based semantic memory search. Falls back to text search if embeddings unavailable."""
         try:
             emb = await ollama.embeddings(query[:400])
@@ -244,7 +270,7 @@ class MemoryManager:
 
             async with get_db() as db:
                 cursor = await db.execute(
-                    "SELECT id, content, emotion_snapshot, tags, created_at, last_accessed, embedding "
+                    "SELECT id, content, emotion_snapshot, tags, created_at, last_accessed, embedding, owner "
                     "FROM memories WHERE embedding IS NOT NULL "
                     "ORDER BY COALESCE(importance_score, 0.5) DESC LIMIT 200"
                 )
@@ -252,6 +278,8 @@ class MemoryManager:
 
             scored = []
             for row in rows:
+                if owner is not None and row["owner"] != owner:
+                    continue
                 mem_emb = _unpack(row["embedding"])
                 sim = _cosine_similarity(emb, mem_emb)
                 if sim >= 0.55:
@@ -268,7 +296,7 @@ class MemoryManager:
 
         except Exception as exc:
             logger.debug("Semantic search fell back to text search: %s", exc)
-            return await self.search_memories(query, limit)
+            return await self.search_memories(query, limit, owner=owner)
 
     # ------------------------------------------------------------------
     # Memory decay
@@ -322,11 +350,11 @@ class MemoryManager:
     # Correction learning
     # ------------------------------------------------------------------
 
-    async def store_correction(self, user_msg: str, assistant_response: str, emotion: dict) -> None:
+    async def store_correction(self, user_msg: str, assistant_response: str, emotion: dict, owner: str = 'system') -> None:
         """Store a user correction as a high-importance memory."""
         try:
             content = f"CORRECTION: User corrected VANTIS. User said: {user_msg[:200]}"
-            mem_id = await self.store_memory(content, emotion, "source:correction,high_priority")
+            mem_id = await self.store_memory(content, emotion, "source:correction,high_priority", owner=owner)
             if mem_id:
                 async with get_db() as db:
                     await db.execute(

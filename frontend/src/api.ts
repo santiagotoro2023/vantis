@@ -74,7 +74,7 @@ export const api = {
   getEmotions: () => request<Record<string, number>>('/brain/emotions'),
 
   getBrainSummary: () =>
-    request<{ thought_count: number; memory_count: number; active_goals: number }>('/brain/summary'),
+    request<{ thought_count: number; memory_count: number; active_goals: number; summary?: string; stats?: Record<string, number>; generated_at?: string; skills_count?: number; edge_count?: number }>('/brain/summary'),
 
   searchBrainNodes: (query: string) =>
     request<Array<{ id: string; type: string; label: string }>>(`/brain/search?q=${encodeURIComponent(query)}`),
