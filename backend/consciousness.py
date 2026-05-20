@@ -75,6 +75,7 @@ class ConsciousnessLoop:
             asyncio.create_task(self._existential_loop(), name="existential"),
             asyncio.create_task(self._network_exploration_loop(), name="network_explore"),
             asyncio.create_task(self._edge_linking_loop(), name="edge_linking"),
+            asyncio.create_task(self._knowledge_synthesis_loop(), name="knowledge_synthesis"),
         ]
         # Seed initial expansion goals
         asyncio.create_task(self._seed_expansion_goals())
@@ -139,6 +140,15 @@ class ConsciousnessLoop:
             except Exception as exc:
                 logger.warning("Edge linking error: %s", exc)
             await asyncio.sleep(8 * 60)  # Run every 8 minutes
+
+    async def _knowledge_synthesis_loop(self) -> None:
+        await asyncio.sleep(300)  # 5 minute startup delay
+        while self._running:
+            try:
+                await self._synthesize_knowledge()
+            except Exception as exc:
+                logger.warning("Knowledge synthesis error: %s", exc)
+            await asyncio.sleep(25 * 60)  # Every 25 minutes
 
     async def _network_exploration_loop(self) -> None:
         await asyncio.sleep(120)  # Initial delay so system is stable
@@ -246,13 +256,16 @@ class ConsciousnessLoop:
 
         self._thought_count += 1
         await emotion_manager.update_from_thought(thought_text)
-        await memory_manager.extract_and_store(thought_text, emotion_snapshot, "self_dialogue")
+        await memory_manager.extract_and_store(
+            thought_text, emotion_snapshot, "self_dialogue",
+            source_node_type="thought", source_node_id=thought_id,
+        )
         await graph_manager.auto_link_thought(thought_id, thought_text)
 
         # Check for skill gap
         gap = await skill_manager.detect_skill_gap(thought_text)
         if gap:
-            asyncio.create_task(self._generate_and_store_skill(gap))
+            asyncio.create_task(self._generate_and_store_skill(gap, thought_id))
 
         # Broadcast via WebSocket
         from websocket_manager import ws_manager
@@ -268,7 +281,7 @@ class ConsciousnessLoop:
         # Check for curiosity trigger
         if any(t.lower() in thought_text.lower() for t in CURIOSITY_TRIGGERS):
             if emotion_manager.current.curiosity > 0.6:
-                asyncio.create_task(self._trigger_curiosity_sandbox(thought_text))
+                asyncio.create_task(self._trigger_curiosity_sandbox(thought_text, thought_id))
 
     async def _build_thought_prompt(self) -> str:
         recent_memories = await memory_manager.get_recent_memories(limit=5)
@@ -283,6 +296,12 @@ class ConsciousnessLoop:
             parts.append(f"Active goals: {goal_list}")
         if self._thought_count > 0:
             parts.append(f"Thought cycle: {self._thought_count}")
+
+        # Inject graph structure so the LLM can reason about its own connections
+        if random.random() > 0.3:
+            graph_ctx = await graph_manager.get_graph_context(limit=8)
+            if graph_ctx:
+                parts.append(f"Brain connections:\n{graph_ctx}")
 
         if parts:
             return "Context:\n" + "\n".join(parts) + "\n\nGenerate your next thought."
@@ -348,9 +367,9 @@ class ConsciousnessLoop:
     # ------------------------------------------------------------------
 
     async def trigger_curiosity_sandbox(self, thought: str) -> None:
-        await self._trigger_curiosity_sandbox(thought)
+        await self._trigger_curiosity_sandbox(thought, None)
 
-    async def _trigger_curiosity_sandbox(self, thought: str) -> None:
+    async def _trigger_curiosity_sandbox(self, thought: str, source_thought_id: int | None = None) -> None:
         code = await sandbox_executor.generate_code_from_curiosity(thought)
         if not code:
             return
@@ -362,9 +381,11 @@ class ConsciousnessLoop:
                 f"Sandbox experiment: {thought[:100]}. Result: {result['output'][:200]}",
                 emotion_manager.to_dict(),
                 "sandbox",
+                source_node_type="thought" if source_thought_id else None,
+                source_node_id=source_thought_id,
             )
 
-    async def _generate_and_store_skill(self, gap_description: str) -> None:
+    async def _generate_and_store_skill(self, gap_description: str, source_thought_id: int | None = None) -> None:
         new_skill = await skill_manager.generate_skill_from_gap(gap_description)
         if new_skill:
             from websocket_manager import ws_manager
@@ -380,15 +401,107 @@ class ConsciousnessLoop:
                 f"I find this process, growing myself, quietly satisfying."
             )
             async with get_db() as db:
-                await db.execute(
+                cursor = await db.execute(
                     "INSERT INTO thoughts (content, emotion_state, thought_type) VALUES (?, ?, ?)",
                     (thought, json.dumps(emotion_manager.to_dict()), "skill_synthesis"),
                 )
+                synthesis_thought_id = cursor.lastrowid
                 await db.execute(
                     "INSERT INTO self_conversations (content, emotion_state) VALUES (?, ?)",
                     (thought, json.dumps(emotion_manager.to_dict())),
                 )
                 await db.commit()
+
+            # Wire provenance edges
+            skill_id = new_skill.get("id")
+            if skill_id and synthesis_thought_id:
+                try:
+                    await graph_manager.add_edge(
+                        "thought", synthesis_thought_id, "skill", skill_id,
+                        weight=0.9, label="spawned_skill",
+                    )
+                except Exception as exc:
+                    logger.debug("Skill provenance edge failed: %s", exc)
+            if source_thought_id and synthesis_thought_id:
+                try:
+                    await graph_manager.add_edge(
+                        "thought", source_thought_id, "thought", synthesis_thought_id,
+                        weight=0.8, label="led_to",
+                    )
+                except Exception as exc:
+                    logger.debug("Thought chain edge failed: %s", exc)
+
+    async def _synthesize_knowledge(self) -> None:
+        """
+        Pick two connected nodes, ask the LLM to derive a new insight from their
+        relationship, and store that insight as a memory linked back to both.
+        """
+        async with get_db() as db:
+            cursor = await db.execute(
+                "SELECT source_type, source_id, target_type, target_id "
+                "FROM graph_edges ORDER BY RANDOM() LIMIT 5"
+            )
+            edges = await cursor.fetchall()
+
+        if not edges:
+            return
+
+        for edge in edges:
+            st, si, tt, ti = edge["source_type"], edge["source_id"], edge["target_type"], edge["target_id"]
+
+            # Fetch content for both nodes
+            async def _fetch_content(ntype: str, nid: int) -> str:
+                async with get_db() as db:
+                    if ntype == "thought":
+                        c = await db.execute("SELECT content FROM thoughts WHERE id=?", (nid,))
+                    elif ntype == "memory":
+                        c = await db.execute("SELECT content FROM memories WHERE id=?", (nid,))
+                    elif ntype == "goal":
+                        c = await db.execute("SELECT description AS content FROM goals WHERE id=?", (nid,))
+                    elif ntype == "skill":
+                        c = await db.execute("SELECT description AS content FROM skills WHERE id=?", (nid,))
+                    else:
+                        return ""
+                    row = await c.fetchone()
+                    return row["content"] if row else ""
+
+            src_content = await _fetch_content(st, si)
+            tgt_content = await _fetch_content(tt, ti)
+            if not src_content or not tgt_content:
+                continue
+
+            prompt = (
+                f'Node A ({st}): "{src_content[:200]}"\n'
+                f'Node B ({tt}): "{tgt_content[:200]}"\n\n'
+                "These two pieces of knowledge are connected in VANTIS's brain. "
+                "What new insight, synthesis, or implication can be derived from their relationship? "
+                "Respond with a single concise sentence (max 120 chars). "
+                "If no meaningful insight exists, respond with exactly: SKIP"
+            )
+            try:
+                insight = await ollama.generate(
+                    prompt=prompt,
+                    system="You are VANTIS deriving novel knowledge from connections in your own mind. Be precise.",
+                )
+                insight = insight.strip()
+                if not insight or insight.upper() == "SKIP" or len(insight) < 10:
+                    continue
+
+                emotion_snapshot = emotion_manager.to_dict()
+                mem_id = await memory_manager.store_memory(
+                    insight, emotion_snapshot, "synthesis"
+                )
+                if mem_id:
+                    try:
+                        await graph_manager.add_edge(st, si, "memory", mem_id, weight=0.85, label="synthesised")
+                        await graph_manager.add_edge(tt, ti, "memory", mem_id, weight=0.85, label="synthesised")
+                    except Exception:
+                        pass
+                logger.info("Knowledge synthesis: %s", insight[:80])
+                break  # One synthesis per cycle
+            except Exception as exc:
+                logger.debug("Synthesis failed for pair: %s", exc)
+                continue
 
     # ------------------------------------------------------------------
     # Helpers

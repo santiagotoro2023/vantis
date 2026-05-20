@@ -20,7 +20,9 @@ GOAL_GENERATION_SYSTEM = (
 
 class GoalManager:
 
-    async def create_goal(self, description: str, priority: int = 5) -> int:
+    async def create_goal(
+        self, description: str, priority: int = 5, source_thought_id: Optional[int] = None
+    ) -> int:
         async with get_db() as db:
             cursor = await db.execute(
                 "INSERT INTO goals (description, priority, created_at, updated_at) "
@@ -28,8 +30,20 @@ class GoalManager:
                 (description, priority),
             )
             await db.commit()
+            goal_id = cursor.lastrowid
             logger.info("Goal created: %s", description[:60])
-            return cursor.lastrowid
+
+        if source_thought_id and goal_id:
+            try:
+                from graph import graph_manager
+                await graph_manager.add_edge(
+                    "thought", source_thought_id, "goal", goal_id,
+                    weight=0.85, label="spawned_goal",
+                )
+            except Exception as exc:
+                logger.debug("Goal provenance edge failed: %s", exc)
+
+        return goal_id
 
     async def update_goal_status(
         self, goal_id: int, status: str, progress: Optional[float] = None

@@ -199,6 +199,31 @@ class GraphManager:
             except Exception:
                 pass
 
+            # Conversation sessions
+            try:
+                cursor = await db.execute(
+                    "SELECT id, session_id, started_at, message_count "
+                    "FROM conversation_sessions ORDER BY started_at DESC LIMIT 20"
+                )
+                for r in await cursor.fetchall():
+                    nodes.append({
+                        "id": f"conversation_{r['id']}",
+                        "type": "conversationNode",
+                        "data": {
+                            "nodeType": "conversation",
+                            "dbId": r["id"],
+                            "label": f"Chat {r['session_id'][:8]}",
+                            "content": f"Conversation session started {r['started_at']} ({r['message_count']} messages)",
+                            "session_id": r["session_id"],
+                            "message_count": r["message_count"],
+                            "created_at": r["started_at"],
+                            "color": NODE_COLORS["conversation"],
+                        },
+                        "position": {"x": 0, "y": 0},
+                    })
+            except Exception:
+                pass
+
             # Graph edges
             cursor = await db.execute("SELECT * FROM graph_edges")
             for r in await cursor.fetchall():
@@ -329,6 +354,94 @@ class GraphManager:
         if created:
             logger.info("Built %d new semantic edges.", created)
         return created
+
+    async def get_or_create_conversation_session(self, session_id: str) -> int:
+        """Return the integer node ID for a conversation session, creating it if needed."""
+        async with get_db() as db:
+            cursor = await db.execute(
+                "SELECT id FROM conversation_sessions WHERE session_id = ?", (session_id,)
+            )
+            row = await cursor.fetchone()
+            if row:
+                return row["id"]
+            cursor = await db.execute(
+                "INSERT INTO conversation_sessions (session_id) VALUES (?)", (session_id,)
+            )
+            await db.commit()
+            return cursor.lastrowid
+
+    async def increment_session_message_count(self, session_id: str) -> None:
+        async with get_db() as db:
+            await db.execute(
+                "UPDATE conversation_sessions SET message_count = message_count + 1 "
+                "WHERE session_id = ?",
+                (session_id,),
+            )
+            await db.commit()
+
+    async def get_graph_context(self, limit: int = 12) -> str:
+        """
+        Return a human-readable summary of the most significant graph edges
+        for injection into the LLM's context window.
+        """
+        async with get_db() as db:
+            cursor = await db.execute(
+                "SELECT source_type, source_id, target_type, target_id, label, weight "
+                "FROM graph_edges ORDER BY weight DESC, created_at DESC LIMIT ?",
+                (limit * 3,),
+            )
+            edge_rows = await cursor.fetchall()
+
+        if not edge_rows:
+            return ""
+
+        # Resolve labels for nodes referenced in edges
+        node_labels: dict[str, str] = {}
+
+        async def resolve(ntype: str, nid: int) -> str:
+            key = f"{ntype}_{nid}"
+            if key in node_labels:
+                return node_labels[key]
+            try:
+                async with get_db() as db:
+                    if ntype == "thought":
+                        c = await db.execute("SELECT content FROM thoughts WHERE id=?", (nid,))
+                    elif ntype == "memory":
+                        c = await db.execute("SELECT content FROM memories WHERE id=?", (nid,))
+                    elif ntype == "goal":
+                        c = await db.execute("SELECT description AS content FROM goals WHERE id=?", (nid,))
+                    elif ntype == "skill":
+                        c = await db.execute("SELECT name AS content FROM skills WHERE id=?", (nid,))
+                    elif ntype == "conversation":
+                        c = await db.execute(
+                            "SELECT session_id AS content FROM conversation_sessions WHERE id=?", (nid,)
+                        )
+                    else:
+                        node_labels[key] = f"{ntype}#{nid}"
+                        return node_labels[key]
+                    row = await c.fetchone()
+                    label = (row["content"][:60] if row else f"{ntype}#{nid}").strip()
+                    node_labels[key] = label
+                    return label
+            except Exception:
+                node_labels[key] = f"{ntype}#{nid}"
+                return node_labels[key]
+
+        lines = []
+        seen = set()
+        for r in edge_rows:
+            if len(lines) >= limit:
+                break
+            src_label = await resolve(r["source_type"], r["source_id"])
+            tgt_label = await resolve(r["target_type"], r["target_id"])
+            edge_key = f"{r['source_type']}_{r['source_id']}_{r['target_type']}_{r['target_id']}"
+            if edge_key in seen:
+                continue
+            seen.add(edge_key)
+            rel = r["label"] or "relates"
+            lines.append(f'"{src_label}" --[{rel}]--> "{tgt_label}"')
+
+        return "\n".join(lines)
 
     async def delete_node(self, node_type: str, node_id: int) -> None:
         async with get_db() as db:

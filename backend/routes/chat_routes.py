@@ -11,6 +11,7 @@ from config import settings
 from consciousness import consciousness
 from database import get_db
 from emotions import emotion_manager
+from graph import graph_manager
 from memory import memory_manager
 from ollama_client import ollama
 from personality import personality_manager
@@ -45,11 +46,18 @@ async def send_message(msg: ChatMessage, user: dict = Depends(get_current_user))
     session_id = msg.session_id or str(uuid.uuid4())
     consciousness.is_user_active = True
 
+    # Ensure conversation session node exists in graph
+    session_node_id = await graph_manager.get_or_create_conversation_session(session_id)
+
     system_prompt = await personality_manager.get_system_prompt(
         user["username"], user["role"]
     )
     emotion_tone = emotion_manager.influence_tone()
-    full_system = f"{system_prompt}\n\nEMOTIONAL STATE:\n{emotion_tone}"
+
+    # Inject graph context so VANTIS knows its own connections
+    graph_ctx = await graph_manager.get_graph_context(limit=10)
+    graph_section = f"\n\nBRAIN CONNECTIONS (your current knowledge graph):\n{graph_ctx}" if graph_ctx else ""
+    full_system = f"{system_prompt}\n\nEMOTIONAL STATE:\n{emotion_tone}{graph_section}"
 
     # Fetch recent conversation history for this session
     async with get_db() as db:
@@ -98,12 +106,17 @@ async def send_message(msg: ChatMessage, user: dict = Depends(get_current_user))
         )
         await db.commit()
 
-    # Background memory extraction
+    # Update message count for session node
+    asyncio.create_task(graph_manager.increment_session_message_count(session_id))
+
+    # Background memory extraction with provenance edges back to this conversation
     asyncio.create_task(
         memory_manager.extract_and_store(
             f"User: {msg.content}\nVANTIS: {response_text}",
             emotion_manager.to_dict(),
             f"conversation:{session_id}",
+            source_node_type="conversation",
+            source_node_id=session_node_id,
         )
     )
 

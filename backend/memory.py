@@ -101,12 +101,19 @@ class MemoryManager:
     # ------------------------------------------------------------------
 
     async def extract_and_store(
-        self, text: str, emotion: dict, source: str
+        self,
+        text: str,
+        emotion: dict,
+        source: str,
+        source_node_type: Optional[str] = None,
+        source_node_id: Optional[int] = None,
     ) -> None:
         """
         Ask the LLM to identify key facts and entities in the provided text.
         Each extracted fact is stored as a separate memory entry.
+        If source_node_type/source_node_id are provided, provenance edges are created.
         """
+        from graph import graph_manager
         prompt = (
             f"Source: {source}\n\n"
             f"Text:\n{text}\n\n"
@@ -124,9 +131,7 @@ class MemoryManager:
                     "Return only valid JSON arrays. No commentary."
                 ),
             )
-            # Attempt to parse LLM JSON output
             raw = raw.strip()
-            # Find the array in the response
             start = raw.find("[")
             end = raw.rfind("]") + 1
             if start == -1 or end == 0:
@@ -136,7 +141,16 @@ class MemoryManager:
             tags = f"source:{source}"
             for mem in memories:
                 if isinstance(mem, str) and mem.strip():
-                    await self.store_memory(mem.strip(), emotion, tags)
+                    mem_id = await self.store_memory(mem.strip(), emotion, tags)
+                    if source_node_type and source_node_id and mem_id:
+                        try:
+                            await graph_manager.add_edge(
+                                source_node_type, source_node_id,
+                                "memory", mem_id,
+                                weight=0.9, label="extracted_from",
+                            )
+                        except Exception as exc:
+                            logger.debug("Provenance edge failed: %s", exc)
         except Exception as exc:
             logger.warning("Memory extraction failed: %s", exc)
 

@@ -156,6 +156,15 @@ async def init_db() -> None:
             )
             logger.info("Seeded default VANTIS personality version 1.")
 
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS conversation_sessions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                session_id TEXT NOT NULL UNIQUE,
+                started_at TEXT NOT NULL DEFAULT (datetime('now')),
+                message_count INTEGER NOT NULL DEFAULT 0
+            )
+        """)
+
         await db.commit()
     logger.info("Database initialised.")
 
