@@ -157,17 +157,31 @@ fi
 # ---------------------------------------------------------------------------
 info "Checking Ollama..."
 if ! command -v ollama &>/dev/null; then
-    info "Installing Ollama..."
-    curl -fsSL https://ollama.com/install.sh | sh
+    info "Installing Ollama (this may take a few minutes)..."
+    curl -fsSL --connect-timeout 30 --max-time 300 https://ollama.com/install.sh | sh \
+        || error "Ollama install failed. Check your internet connection and retry."
 fi
 success "Ollama: $(ollama --version 2>&1 | head -1)"
 
 if ! systemctl is-active --quiet ollama 2>/dev/null; then
     info "Starting Ollama service..."
     systemctl daemon-reload
-    systemctl enable --now ollama || ollama serve &>/dev/null &
-    sleep 3
+    if ! systemctl enable --now ollama 2>/dev/null; then
+        info "Systemd unavailable -- starting Ollama in background..."
+        ollama serve &>/dev/null &
+    fi
 fi
+info "Waiting for Ollama API..."
+for _i in $(seq 1 30); do
+    if curl -sf --max-time 2 http://localhost:11434/api/version &>/dev/null; then
+        success "Ollama API ready."
+        break
+    fi
+    if [[ $_i -eq 30 ]]; then
+        warn "Ollama API not ready after 60s -- model pull may fail. Run 'ollama serve' manually."
+    fi
+    sleep 2
+done
 
 # ---------------------------------------------------------------------------
 # Pull model
@@ -197,8 +211,13 @@ info "This runs once. Voice will be instant on first use."
 "$VANTIS_DIR/venv/bin/python" - <<'PYEOF' 2>&1 | grep -v "^$" || warn "Voice model pre-download failed -- it will auto-download on first TTS request."
 from kokoro_onnx import Kokoro
 print("Downloading Kokoro model files...")
-Kokoro()
-print("Kokoro TTS model ready.")
+try:
+    Kokoro()
+    print("Kokoro TTS model ready.")
+except TypeError:
+    print("kokoro-onnx API changed -- model will auto-download on first TTS request.")
+except Exception as e:
+    print(f"Warning: {e}")
 PYEOF
 success "Voice model ready."
 

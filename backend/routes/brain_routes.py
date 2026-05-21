@@ -33,17 +33,19 @@ async def get_thoughts(
     thought_type: Optional[str] = None,
     user: dict = Depends(get_current_user),
 ):
+    username = user["username"]
     async with get_db() as db:
         if thought_type:
             cursor = await db.execute(
-                "SELECT * FROM thoughts WHERE thought_type = ? "
+                "SELECT * FROM thoughts WHERE thought_type = ? AND (owner = 'system' OR owner = ?) "
                 "ORDER BY created_at DESC LIMIT ? OFFSET ?",
-                (thought_type, limit, offset),
+                (thought_type, username, limit, offset),
             )
         else:
             cursor = await db.execute(
-                "SELECT * FROM thoughts ORDER BY created_at DESC LIMIT ? OFFSET ?",
-                (limit, offset),
+                "SELECT * FROM thoughts WHERE owner = 'system' OR owner = ? "
+                "ORDER BY created_at DESC LIMIT ? OFFSET ?",
+                (username, limit, offset),
             )
         rows = await cursor.fetchall()
     return [dict(r) for r in rows]
@@ -60,17 +62,38 @@ async def get_memories(
     async with get_db() as db:
         if search:
             cursor = await db.execute(
-                "SELECT * FROM memories WHERE (content LIKE ? OR tags LIKE ?) AND owner = ? "
+                "SELECT * FROM memories WHERE (content LIKE ? OR tags LIKE ?) AND (owner = ? OR shared = 1) "
                 "ORDER BY last_accessed DESC LIMIT ? OFFSET ?",
                 (f"%{search}%", f"%{search}%", owner, limit, offset),
             )
         else:
             cursor = await db.execute(
-                "SELECT * FROM memories WHERE owner = ? ORDER BY last_accessed DESC LIMIT ? OFFSET ?",
+                "SELECT * FROM memories WHERE owner = ? OR shared = 1 "
+                "ORDER BY last_accessed DESC LIMIT ? OFFSET ?",
                 (owner, limit, offset),
             )
         rows = await cursor.fetchall()
     return [dict(r) for r in rows]
+
+
+@router.put("/memories/{memory_id}/share")
+async def toggle_memory_share(
+    memory_id: int,
+    user: dict = Depends(get_current_user),
+):
+    """Toggle the shared flag on a memory. Only the owner or admin may do this."""
+    async with get_db() as db:
+        cursor = await db.execute("SELECT owner, shared FROM memories WHERE id = ?", (memory_id,))
+        row = await cursor.fetchone()
+    if not row:
+        raise HTTPException(404, "Memory not found.")
+    if row["owner"] != user["username"] and user["role"] != "administrator":
+        raise HTTPException(403, "Not your memory.")
+    new_shared = 0 if row["shared"] else 1
+    async with get_db() as db:
+        await db.execute("UPDATE memories SET shared = ? WHERE id = ?", (new_shared, memory_id))
+        await db.commit()
+    return {"shared": bool(new_shared)}
 
 
 @router.get("/self-dialogue")

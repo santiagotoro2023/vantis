@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { X, Check, XCircle, Play, ExternalLink, ChevronRight, GitBranch } from 'lucide-react'
+import { X, Check, XCircle, Play, ExternalLink, ChevronRight, GitBranch, Share2, Lock } from 'lucide-react'
 import { api } from '../api'
 import type { EmotionState, ConversationMessage } from '../types'
 
@@ -224,6 +224,8 @@ function MemoryPanel({
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState((data.content as string) || '')
   const [saving, setSaving] = useState(false)
+  const [shared, setShared] = useState(!!data.shared)
+  const [sharingBusy, setSharingBusy] = useState(false)
 
   const emotions = parseEmotions(data.emotion_snapshot)
 
@@ -241,11 +243,26 @@ function MemoryPanel({
     try { await onSave(draft) } finally { setSaving(false); setEditing(false) }
   }
 
+  async function toggleShare() {
+    const dbId = data.dbId as number
+    if (!dbId) return
+    setSharingBusy(true)
+    try {
+      const result = await api.shareMemory(dbId, !shared)
+      setShared(result.shared)
+    } catch {
+      // ignore
+    } finally {
+      setSharingBusy(false)
+    }
+  }
+
   return (
     <div className="space-y-4">
-      {tags.length > 0 && (
-        <div className="flex flex-wrap gap-1">
+      {(tags.length > 0 || shared) && (
+        <div className="flex items-center gap-1.5 flex-wrap">
           {tags.map((tag, i) => <Badge key={i} color="emerald">{tag}</Badge>)}
+          {shared && <Badge color="blue">SHARED</Badge>}
         </div>
       )}
 
@@ -264,11 +281,22 @@ function MemoryPanel({
         ) : (
           <div>
             <p className="text-xs text-text leading-relaxed whitespace-pre-wrap">{data.content as string}</p>
-            {isAdmin && (
-              <button onClick={() => setEditing(true)} className="mt-2 text-[10px] font-mono text-muted hover:text-accent transition-colors">
-                EDIT CONTENT
+            <div className="flex gap-3 mt-2">
+              {isAdmin && (
+                <button onClick={() => setEditing(true)} className="text-[10px] font-mono text-muted hover:text-accent transition-colors">
+                  EDIT CONTENT
+                </button>
+              )}
+              <button
+                onClick={toggleShare}
+                disabled={sharingBusy}
+                className={`flex items-center gap-1 text-[10px] font-mono transition-colors ${shared ? 'text-blue-400 hover:text-muted' : 'text-muted hover:text-blue-400'}`}
+                title={shared ? 'Unshare this memory' : 'Share with all users'}
+              >
+                {shared ? <Lock size={9} /> : <Share2 size={9} />}
+                {shared ? 'UNSHARE' : 'SHARE'}
               </button>
-            )}
+            </div>
           </div>
         )}
       </div>

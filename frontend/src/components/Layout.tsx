@@ -1,6 +1,6 @@
 import { Link, useLocation, useNavigate } from 'react-router-dom'
 import { useState } from 'react'
-import { Brain, MessageSquare, Target, Settings, Users, Terminal, Activity, LogOut, Wifi, Zap, Download, FileText, Moon, Sun } from 'lucide-react'
+import { Brain, MessageSquare, Target, Settings, Users, Terminal, Activity, LogOut, Wifi, Zap, Download, FileText, Moon, Sun, SlidersHorizontal } from 'lucide-react'
 import clsx from 'clsx'
 import VantisLogo from './VantisLogo'
 import NotificationHistory from './NotificationHistory'
@@ -133,6 +133,17 @@ export default function Layout({ children, role, notification }: Props) {
           >
             {dim ? <Sun size={16} /> : <Moon size={16} />}
           </button>
+          <Link
+            to="/settings"
+            title="Settings"
+            className={`p-2.5 transition-all relative group ${loc.pathname === '/settings' ? 'text-accent' : 'text-muted hover:text-text'}`}
+          >
+            <SlidersHorizontal size={16} />
+            <div className="absolute left-full ml-2 px-2 py-1 bg-surface border border-border text-xs text-text
+                            whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-50">
+              Settings
+            </div>
+          </Link>
           <NotificationHistory />
           <button
             onClick={logout}

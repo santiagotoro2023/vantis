@@ -203,12 +203,16 @@ async def init_db() -> None:
         # Migration-safe column additions
         await _add_column_if_missing(db, "memories", "importance_score", "REAL NOT NULL DEFAULT 0.5")
         await _add_column_if_missing(db, "memories", "owner", "TEXT NOT NULL DEFAULT 'system'")
+        await _add_column_if_missing(db, "memories", "shared", "INTEGER NOT NULL DEFAULT 0")
         await _add_column_if_missing(db, "goals", "parent_goal_id", "INTEGER REFERENCES goals(id)")
         await _add_column_if_missing(db, "goals", "owner", "TEXT NOT NULL DEFAULT 'system'")
         await _add_column_if_missing(db, "conversation_sessions", "name", "TEXT")
         await _add_column_if_missing(db, "conversation_sessions", "owner", "TEXT")
         await _add_column_if_missing(db, "thoughts", "importance_score", "REAL NOT NULL DEFAULT 0.5")
+        await _add_column_if_missing(db, "thoughts", "owner", "TEXT NOT NULL DEFAULT 'system'")
         await _add_column_if_missing(db, "personality_versions", "owner", "TEXT NOT NULL DEFAULT 'system'")
+        await _add_column_if_missing(db, "users", "totp_secret", "TEXT")
+        await _add_column_if_missing(db, "users", "totp_enabled", "INTEGER NOT NULL DEFAULT 0")
 
         await db.commit()
 

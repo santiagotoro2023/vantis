@@ -34,6 +34,22 @@ export const api = {
     }).then(r => r.ok ? r.json() : r.json().then(e => Promise.reject(new Error(e.detail))))
   },
 
+  verify2fa: (tmpToken: string, code: string) =>
+    request<{ access_token: string; token_type: string; role: string }>('/auth/2fa/verify', {
+      method: 'POST',
+      body: JSON.stringify({ tmp_token: tmpToken, code }),
+    }),
+
+  setup2fa: () => request<{ secret: string; uri: string }>('/auth/2fa/setup'),
+
+  enable2fa: (secret: string, code: string) =>
+    request('/auth/2fa/enable', { method: 'POST', body: JSON.stringify({ secret, code }) }),
+
+  disable2fa: (code: string) =>
+    request('/auth/2fa/disable', { method: 'POST', body: JSON.stringify({ code }) }),
+
+  get2faStatus: () => request<{ enabled: boolean }>('/auth/2fa/status'),
+
   getMe: () => request<{ username: string; role: string }>('/auth/me'),
 
   changePassword: (currentPassword: string, newPassword: string) =>
@@ -191,14 +207,7 @@ export const api = {
               const data = JSON.parse(line.slice(6))
               if (data.token) onToken?.(data.token)
               if (data.session_id) resolvedSessionId = data.session_id
-              if (data.error && !data.done) onError?.(new Error(data.error))
-              if (data.done) {
-                if (!data.full_text && data.error) {
-                  onError?.(new Error(data.error || 'No response from model. Is Ollama running?'))
-                } else {
-                  onDone?.(data.full_text || '', resolvedSessionId)
-                }
-              }
+              if (data.done) onDone?.(data.full_text || '', resolvedSessionId)
             } catch {}
           }
         }
@@ -211,6 +220,9 @@ export const api = {
   },
 
   decomposeGoal: (id: number) => request(`/goals/${id}/decompose`, { method: 'POST' }),
+
+  shareMemory: (id: number, shared: boolean) =>
+    request<{ shared: boolean }>(`/brain/memories/${id}/share`, { method: 'PUT' }),
 
   uploadMemoryFile: (file: File) => {
     const form = new FormData()
