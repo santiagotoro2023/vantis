@@ -106,10 +106,20 @@ else
     info "Docker not found. Installing..."
     apt-get update -qq
     apt-get install -y --no-install-recommends ca-certificates gnupg lsb-release curl
-    curl -fsSL https://get.docker.com | sh
-    systemctl enable --now docker
+    curl -fsSL https://get.docker.com | sh || true
     DOCKER_INSTALLED_BY_US=true
-    success "Docker installed and started."
+    # Start Docker if possible (may fail in containers or limited VMs -- sandbox falls back to subprocess)
+    if systemctl enable --now docker 2>/dev/null; then
+        success "Docker installed and started."
+    else
+        warn "Docker installed but daemon could not start (container/VM environment?)."
+        warn "Sandbox will use restricted subprocess fallback instead of Docker isolation."
+    fi
+fi
+
+# Verify Docker is actually usable (daemon reachable)
+if ! docker info &>/dev/null 2>&1; then
+    warn "Docker daemon is not reachable. Sandbox will use subprocess fallback."
 fi
 
 # ---------------------------------------------------------------------------
