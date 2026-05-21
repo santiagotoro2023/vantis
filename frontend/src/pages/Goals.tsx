@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback } from 'react'
 import { api } from '../api'
 import { useWebSocket } from '../hooks/useWebSocket'
 import type { Goal, WsMessage } from '../types'
-import { Plus, Check, X, Trash2 } from 'lucide-react'
+import { Plus, Check, X, Trash2, GitBranch } from 'lucide-react'
 import clsx from 'clsx'
 
 const STATUS_STYLES: Record<string, string> = {
@@ -24,6 +24,7 @@ export default function Goals() {
   const [newDesc, setNewDesc] = useState('')
   const [newPriority, setNewPriority] = useState(5)
   const [adding, setAdding] = useState(false)
+  const [decomposing, setDecomposing] = useState<number | null>(null)
   const role = localStorage.getItem('vantis_role')
 
   const load = async () => {
@@ -60,6 +61,18 @@ export default function Goals() {
     load()
   }
 
+  const decomposeGoal = async (id: number) => {
+    setDecomposing(id)
+    try {
+      await api.decomposeGoal(id)
+      await load()
+    } catch {
+      // ignore
+    } finally {
+      setDecomposing(null)
+    }
+  }
+
   const active = goals.filter(g => g.status === 'active')
   const achieved = goals.filter(g => g.status === 'achieved')
   const abandoned = goals.filter(g => g.status === 'abandoned')
@@ -86,6 +99,14 @@ export default function Goals() {
           <div className="flex items-center gap-1 shrink-0">
             {goal.status === 'active' && (
               <>
+                <button
+                  onClick={() => decomposeGoal(goal.id)}
+                  disabled={decomposing === goal.id}
+                  title="Decompose into sub-goals"
+                  className="p-1 text-muted hover:text-accent transition-colors disabled:opacity-40"
+                >
+                  <GitBranch size={14} className={decomposing === goal.id ? 'animate-pulse' : ''} />
+                </button>
                 <button
                   onClick={() => setStatus(goal.id, 'achieved')}
                   title="Mark achieved"

@@ -208,6 +208,7 @@ async def init_db() -> None:
         await _add_column_if_missing(db, "conversation_sessions", "name", "TEXT")
         await _add_column_if_missing(db, "conversation_sessions", "owner", "TEXT")
         await _add_column_if_missing(db, "thoughts", "importance_score", "REAL NOT NULL DEFAULT 0.5")
+        await _add_column_if_missing(db, "personality_versions", "owner", "TEXT NOT NULL DEFAULT 'system'")
 
         await db.commit()
 

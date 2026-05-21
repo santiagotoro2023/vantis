@@ -5,7 +5,14 @@ import { useWebSocket } from '../hooks/useWebSocket'
 import EmotionBar from '../components/EmotionBar'
 import EmotionTimeline from '../components/EmotionTimeline'
 import type { EmotionState, WsMessage } from '../types'
-import { Send, Plus, Search, MessageSquare, Volume2, VolumeX, Menu, X } from 'lucide-react'
+import { Send, Plus, Search, MessageSquare, Volume2, VolumeX, Menu, X, Mic, Paperclip } from 'lucide-react'
+
+declare global {
+  interface Window {
+    SpeechRecognition: any
+    webkitSpeechRecognition: any
+  }
+}
 
 interface Message {
   role: 'user' | 'assistant'
@@ -96,13 +103,19 @@ export default function Chat() {
   const [ttsEnabled, setTtsEnabled] = useState(() => localStorage.getItem('vantis_tts') === '1')
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [ctxMenu, setCtxMenu] = useState<{ session: ChatSession; x: number; y: number } | null>(null)
+  const [listening, setListening] = useState(false)
+  const [uploading, setUploading] = useState(false)
+  const [recallResults, setRecallResults] = useState<Array<{ id: string; type: string; label: string }> | null>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const renameInputRef = useRef<HTMLInputElement>(null)
   const abortRef = useRef<AbortController | null>(null)
+  const recognitionRef = useRef<any>(null)
+  const fileInputRef = useRef<HTMLInputElement>(null)
   // Sentence-level TTS queue for parallel streaming playback
   const ttsBufferRef = useRef('')
   const ttsQueueRef = useRef<HTMLAudioElement[]>([])
   const ttsPlayingRef = useRef(false)
+  const hasSpeechRecognition = typeof window !== 'undefined' && ('SpeechRecognition' in window || 'webkitSpeechRecognition' in window)
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
@@ -136,6 +149,23 @@ export default function Chat() {
       setTimeout(() => renameInputRef.current?.focus(), 50)
     }
   }, [renamingId])
+
+  // /recall inline search
+  useEffect(() => {
+    if (!input.startsWith('/recall ')) {
+      setRecallResults(null)
+      return
+    }
+    const q = input.slice(8).trim()
+    if (!q) { setRecallResults([]); return }
+    const t = setTimeout(async () => {
+      try {
+        const results = await api.searchBrainNodes(q)
+        setRecallResults(results)
+      } catch { setRecallResults([]) }
+    }, 300)
+    return () => clearTimeout(t)
+  }, [input])
 
   const handleWs = useCallback((msg: WsMessage) => {
     if (msg.type === 'emotion_update') {
@@ -304,6 +334,69 @@ export default function Chat() {
     setRenamingId(null)
   }
 
+  const startListening = () => {
+    const SR = window.SpeechRecognition || window.webkitSpeechRecognition
+    if (!SR) return
+    const recognition = new SR()
+    recognition.continuous = false
+    recognition.interimResults = false
+    recognition.lang = 'en-US'
+    recognition.onresult = (e: any) => {
+      setInput(prev => prev + e.results[0][0].transcript)
+      setListening(false)
+    }
+    recognition.onerror = () => setListening(false)
+    recognition.onend = () => setListening(false)
+    recognition.start()
+    recognitionRef.current = recognition
+    setListening(true)
+  }
+
+  const handleFileUpload = async (file: File) => {
+    setUploading(true)
+    const form = new FormData()
+    form.append('file', file)
+    const token = localStorage.getItem('vantis_token')
+    try {
+      const res = await fetch('/api/memory/upload', {
+        method: 'POST',
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+        body: form,
+      })
+      if (!res.ok) throw new Error(await res.text())
+      const data = await res.json()
+      setMessages(prev => [...prev, {
+        role: 'assistant' as const,
+        content: `File indexed. ${data.memories_created} memory chunks created from \`${data.filename}\`. You can now ask questions about its content.`,
+        timestamp: new Date().toISOString(),
+      }])
+    } catch (err) {
+      setMessages(prev => [...prev, {
+        role: 'assistant' as const,
+        content: `File upload failed: ${err instanceof Error ? err.message : 'Unknown error'}`,
+        timestamp: new Date().toISOString(),
+      }])
+    } finally {
+      setUploading(false)
+    }
+  }
+
+  const exportSession = async (sid: string, name?: string) => {
+    setCtxMenu(null)
+    const token = localStorage.getItem('vantis_token')
+    const res = await fetch(`/api/chat/sessions/${sid}/export`, {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    })
+    if (!res.ok) return
+    const blob = await res.blob()
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `${name || sid.slice(0, 8)}.md`
+    a.click()
+    URL.revokeObjectURL(url)
+  }
+
   const handleKey = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault()
@@ -431,6 +524,12 @@ export default function Chat() {
           className="w-full text-left px-3 py-1.5 text-[11px] font-mono text-text hover:bg-accent/10 hover:text-accent transition-colors"
         >
           Rename
+        </button>
+        <button
+          onClick={() => exportSession(ctxMenu.session.session_id, ctxMenu.session.name)}
+          className="w-full text-left px-3 py-1.5 text-[11px] font-mono text-text hover:bg-accent/10 hover:text-accent transition-colors"
+        >
+          Export
         </button>
         <button
           onClick={() => deleteSession(ctxMenu.session.session_id)}
@@ -575,6 +674,40 @@ export default function Chat() {
         </div>
 
         <div className="border-t border-border p-4 bg-surface shrink-0">
+          {/* /recall popover */}
+          {recallResults !== null && (
+            <div className="mb-2 bg-surface border border-border shadow-xl max-h-48 overflow-y-auto">
+              {recallResults.length === 0 ? (
+                <div className="px-3 py-2 text-[11px] font-mono text-muted/60">No results.</div>
+              ) : (
+                recallResults.map(r => (
+                  <button
+                    key={r.id}
+                    onClick={() => {
+                      setInput(`/recall ${r.label}`)
+                      setRecallResults(null)
+                    }}
+                    className="w-full text-left px-3 py-1.5 text-[11px] font-mono text-text hover:bg-accent/10 hover:text-accent transition-colors flex items-center gap-2"
+                  >
+                    <span className="text-muted/60 text-[9px]">{r.type}</span>
+                    <span className="truncate">{r.label}</span>
+                  </button>
+                ))
+              )}
+            </div>
+          )}
+          {/* File input (hidden) */}
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept=".txt,.md,.pdf,.py,.js,.ts,.json"
+            className="hidden"
+            onChange={e => {
+              const file = e.target.files?.[0]
+              if (file) handleFileUpload(file)
+              e.target.value = ''
+            }}
+          />
           <div className="flex gap-2">
             <textarea
               value={input}
@@ -592,6 +725,26 @@ export default function Chat() {
                 t.style.height = `${t.scrollHeight}px`
               }}
             />
+            {/* Mic button */}
+            {hasSpeechRecognition && (
+              <button
+                onClick={startListening}
+                disabled={listening || uploading}
+                title={listening ? 'Listening...' : 'Voice input'}
+                className={`p-2.5 rounded-lg transition-colors ${listening ? 'bg-red-500/20 text-red-400 animate-pulse border border-red-500/40' : 'border border-border text-muted hover:text-accent hover:border-accent/40'}`}
+              >
+                <Mic size={16} />
+              </button>
+            )}
+            {/* File upload button */}
+            <button
+              onClick={() => fileInputRef.current?.click()}
+              disabled={uploading}
+              title={uploading ? 'Uploading...' : 'Upload file'}
+              className={`p-2.5 rounded-lg border transition-colors ${uploading ? 'border-accent/40 text-accent animate-pulse' : 'border-border text-muted hover:text-accent hover:border-accent/40'}`}
+            >
+              <Paperclip size={16} />
+            </button>
             <button
               onClick={send}
               disabled={loading || !input.trim()}
@@ -600,7 +753,7 @@ export default function Chat() {
               <Send size={16} />
             </button>
           </div>
-          <div className="text-xs text-muted mt-1.5 font-mono">Enter to send, Shift+Enter for newline</div>
+          <div className="text-xs text-muted mt-1.5 font-mono">Enter to send · Shift+Enter newline · /recall for brain search</div>
         </div>
       </div>
 

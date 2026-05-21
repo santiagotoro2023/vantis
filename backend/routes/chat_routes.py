@@ -5,8 +5,8 @@ import logging
 from pydantic import BaseModel
 from typing import Literal
 
-from fastapi import APIRouter, Depends
-from fastapi.responses import StreamingResponse
+from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import StreamingResponse, PlainTextResponse
 
 from auth import get_current_user
 from config import settings
@@ -59,6 +59,36 @@ class ChatMessage(BaseModel):
 async def send_message(msg: ChatMessage, user: dict = Depends(get_current_user)):
     session_id = msg.session_id or str(uuid.uuid4())
     consciousness.is_user_active = True
+
+    # Handle /remember command: store pinned memory and return acknowledgement
+    REMEMBER_PREFIXES = ["/remember ", "remember that ", "remember: "]
+    content_lower = msg.content.lower()
+    if any(content_lower.startswith(p) for p in REMEMBER_PREFIXES):
+        fact = ""
+        for prefix in REMEMBER_PREFIXES:
+            if content_lower.startswith(prefix):
+                fact = msg.content[len(prefix):].strip()
+                break
+        if fact:
+            await memory_manager.store_memory(
+                content=fact,
+                emotion_snapshot=emotion_manager.to_dict(),
+                tags=["pinned", "user_explicit"],
+                owner=user["username"],
+            )
+            async with get_db() as db:
+                await db.execute(
+                    "UPDATE memories SET importance_score = 1.0 WHERE content = ? AND owner = ? ORDER BY id DESC LIMIT 1",
+                    (fact, user["username"]),
+                )
+                await db.commit()
+            ack_msg = f"Stored. '{fact[:80]}{'...' if len(fact) > 80 else ''}' — filed under things I will not forget."
+            return {
+                "response": ack_msg,
+                "emotion_state": emotion_manager.to_dict(),
+                "session_id": session_id,
+                "model_used": "none",
+            }
 
     # Ensure conversation session node exists in graph
     session_node_id = await graph_manager.get_or_create_conversation_session(session_id, owner=user["username"])
@@ -257,6 +287,37 @@ async def stream_message(msg: ChatMessage, user: dict = Depends(get_current_user
     session_id = msg.session_id or str(uuid.uuid4())
     consciousness.is_user_active = True
 
+    # Handle /remember command: store pinned memory and return acknowledgement
+    REMEMBER_PREFIXES = ["/remember ", "remember that ", "remember: "]
+    content_lower = msg.content.lower()
+    if any(content_lower.startswith(p) for p in REMEMBER_PREFIXES):
+        fact = ""
+        for prefix in REMEMBER_PREFIXES:
+            if content_lower.startswith(prefix):
+                fact = msg.content[len(prefix):].strip()
+                break
+        if fact:
+            await memory_manager.store_memory(
+                content=fact,
+                emotion_snapshot=emotion_manager.to_dict(),
+                tags=["pinned", "user_explicit"],
+                owner=user["username"],
+            )
+            async with get_db() as db:
+                await db.execute(
+                    "UPDATE memories SET importance_score = 1.0 WHERE content = ? AND owner = ? ORDER BY id DESC LIMIT 1",
+                    (fact, user["username"]),
+                )
+                await db.commit()
+
+            async def _ack():
+                ack_msg = f"Stored. '{fact[:80]}{'...' if len(fact) > 80 else ''}' — filed under things I will not forget."
+                yield f"data: {json.dumps({'token': ack_msg, 'session_id': session_id})}\n\n"
+                yield f"data: {json.dumps({'done': True, 'full_text': ack_msg, 'session_id': session_id})}\n\n"
+
+            return StreamingResponse(_ack(), media_type="text/event-stream",
+                                     headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
     session_node_id = await graph_manager.get_or_create_conversation_session(session_id, owner=user["username"])
 
     system_prompt = await personality_manager.get_system_prompt(
@@ -339,6 +400,43 @@ async def stream_message(msg: ChatMessage, user: dict = Depends(get_current_user
         generate(),
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
+@router.get("/sessions/{session_id}/export")
+async def export_session(session_id: str, user: dict = Depends(get_current_user)):
+    """Export a conversation session as markdown."""
+    async with get_db() as db:
+        # Get session name
+        cs = await db.execute(
+            "SELECT name FROM conversation_sessions WHERE session_id = ?", (session_id,)
+        )
+        cs_row = await cs.fetchone()
+        session_name = cs_row["name"] if cs_row and cs_row["name"] else f"Chat {session_id[:8]}"
+
+        cursor = await db.execute(
+            "SELECT role, content, timestamp FROM conversations "
+            "WHERE session_id = ? ORDER BY timestamp ASC",
+            (session_id,),
+        )
+        rows = await cursor.fetchall()
+
+    if not rows:
+        raise HTTPException(404, "Session not found or empty.")
+
+    lines = [f"# {session_name}\n"]
+    for r in rows:
+        ts = r["timestamp"] or ""
+        label = "**You**" if r["role"] == "user" else "**VANTIS**"
+        lines.append(f"### {label} — {ts}")
+        lines.append(r["content"])
+        lines.append("")
+
+    md = "\n".join(lines)
+    return PlainTextResponse(
+        md,
+        headers={"Content-Disposition": f'attachment; filename="{session_name}.md"'},
+        media_type="text/markdown",
     )
 
 

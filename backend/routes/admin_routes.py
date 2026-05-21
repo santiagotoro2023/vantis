@@ -32,12 +32,12 @@ class PersonalityUpdate(BaseModel):
 
 @router.get("/personality")
 async def get_personality(user: dict = Depends(require_admin)):
-    return await personality_manager.load_current()
+    return await personality_manager.load_current(owner=user["username"])
 
 
 @router.put("/personality")
 async def update_personality(data: PersonalityUpdate, user: dict = Depends(require_admin)):
-    current = await personality_manager.load_current()
+    current = await personality_manager.load_current(owner=user["username"])
     config = current.get("full_config", {})
     if data.base_prompt_override is not None:
         config["base_prompt_override"] = data.base_prompt_override
@@ -47,14 +47,14 @@ async def update_personality(data: PersonalityUpdate, user: dict = Depends(requi
         config["auto_evolve"] = data.auto_evolve
     if data.ai_name is not None:
         config["ai_name"] = data.ai_name
-    version_id = await personality_manager.apply_evolution("Manual config update.", config)
+    version_id = await personality_manager.apply_evolution("Manual config update.", config, owner=user["username"])
     await audit(user["username"], "personality_update", f"version_id={version_id}")
     return {"version_id": version_id, "status": "Personality updated."}
 
 
 @router.get("/personality/versions")
 async def list_personality_versions(user: dict = Depends(require_admin)):
-    return await personality_manager.get_all_versions()
+    return await personality_manager.get_all_versions(owner=user["username"])
 
 
 @router.post("/personality/evolve")
@@ -77,7 +77,7 @@ async def apply_version(version_id: int, user: dict = Depends(require_admin)):
     config = json.loads(row["full_config"])
     config.pop("pending_evolution", None)
     new_id = await personality_manager.apply_evolution(
-        f"Applied version {row['version']} snapshot.", config
+        f"Applied version {row['version']} snapshot.", config, owner=user["username"]
     )
     return {"version_id": new_id, "status": "Personality version applied."}
 
@@ -507,3 +507,84 @@ async def get_audit_log(
         )
         rows = await cursor.fetchall()
     return [dict(r) for r in rows]
+
+
+# ---------------------------------------------------------------------------
+# Webhook Reports
+# ---------------------------------------------------------------------------
+
+class WebhookConfig(BaseModel):
+    url: str
+    schedule: str = "daily"  # "daily" or "weekly"
+
+
+@router.post("/reports/webhook")
+async def set_webhook(data: WebhookConfig, user: dict = Depends(require_admin)):
+    """Save webhook URL for activity reports."""
+    async with get_db() as db:
+        await db.execute(
+            "CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT, owner TEXT NOT NULL DEFAULT 'system')"
+        )
+        await db.execute(
+            "INSERT INTO settings (key, value, owner) VALUES (?, ?, ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+            (f"webhook_url:{user['username']}", data.url, user["username"])
+        )
+        await db.execute(
+            "INSERT INTO settings (key, value, owner) VALUES (?, ?, ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+            (f"webhook_schedule:{user['username']}", data.schedule, user["username"])
+        )
+        await db.commit()
+    return {"status": "Webhook configured.", "url": data.url, "schedule": data.schedule}
+
+
+@router.post("/reports/generate")
+async def generate_report(user: dict = Depends(require_admin)):
+    """Generate an activity report and optionally POST it to the configured webhook."""
+    async with get_db() as db:
+        # Recent thoughts
+        t_cur = await db.execute("SELECT content, created_at FROM thoughts ORDER BY created_at DESC LIMIT 10")
+        thoughts = await t_cur.fetchall()
+        # Recent memories
+        m_cur = await db.execute("SELECT content, created_at FROM memories WHERE owner = ? ORDER BY created_at DESC LIMIT 10", (user["username"],))
+        memories = await m_cur.fetchall()
+        # Active goals
+        g_cur = await db.execute("SELECT description, progress FROM goals WHERE status='active' AND (owner=? OR owner='system') LIMIT 10", (user["username"],))
+        goals = await g_cur.fetchall()
+        # Recent conversations count
+        c_cur = await db.execute("SELECT COUNT(*) FROM conversations")
+        conv_count = (await c_cur.fetchone())[0]
+        # Webhook URL (check if settings table exists first)
+        webhook_url = None
+        try:
+            await db.execute(
+                "CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT, owner TEXT NOT NULL DEFAULT 'system')"
+            )
+            w_cur = await db.execute("SELECT value FROM settings WHERE key=?", (f"webhook_url:{user['username']}",))
+            webhook_row = await w_cur.fetchone()
+            webhook_url = webhook_row["value"] if webhook_row else None
+        except Exception:
+            pass
+
+    lines = ["# VANTIS Activity Report\n"]
+    lines.append(f"**Conversations:** {conv_count}")
+    lines.append(f"\n## Active Goals")
+    for g in goals:
+        lines.append(f"- {g['description']} ({g['progress']:.0%})")
+    lines.append(f"\n## Recent Memories")
+    for m in memories:
+        lines.append(f"- {m['content'][:100]}")
+    lines.append(f"\n## Recent Thoughts")
+    for t in thoughts:
+        lines.append(f"- {t['content'][:100]}")
+
+    report = "\n".join(lines)
+
+    if webhook_url:
+        import httpx
+        try:
+            async with httpx.AsyncClient() as client:
+                await client.post(webhook_url, json={"report": report, "actor": user["username"]}, timeout=10)
+        except Exception as exc:
+            return {"report": report, "webhook_sent": False, "webhook_error": str(exc)}
+
+    return {"report": report, "webhook_sent": bool(webhook_url)}

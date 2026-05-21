@@ -11,6 +11,7 @@ import UserManagement from './pages/UserManagement'
 import NetworkView from './pages/NetworkView'
 import SkillsView from './pages/SkillsView'
 import UpdatePage from './pages/UpdatePage'
+import ReportsPage from './pages/ReportsPage'
 import { useWebSocket } from './hooks/useWebSocket'
 import { useKeyboardShortcuts } from './hooks/useKeyboardShortcuts'
 import type { WsMessage } from './types'
@@ -52,6 +53,7 @@ function ProtectedApp() {
         <Route path="/admin/users" element={<UserManagement />} />
         <Route path="/skills" element={<SkillsView />} />
         <Route path="/admin/update" element={<UpdatePage />} />
+        <Route path="/admin/reports" element={<ReportsPage />} />
         <Route path="*" element={<Navigate to="/brain" replace />} />
       </Routes>
     </Layout>

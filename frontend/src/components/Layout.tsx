@@ -1,5 +1,6 @@
 import { Link, useLocation, useNavigate } from 'react-router-dom'
-import { Brain, MessageSquare, Target, Settings, Users, Terminal, Activity, LogOut, Wifi, Zap, Download } from 'lucide-react'
+import { useState } from 'react'
+import { Brain, MessageSquare, Target, Settings, Users, Terminal, Activity, LogOut, Wifi, Zap, Download, FileText, Moon, Sun } from 'lucide-react'
 import clsx from 'clsx'
 import VantisLogo from './VantisLogo'
 import NotificationHistory from './NotificationHistory'
@@ -24,6 +25,7 @@ const ADMIN_NAV = [
   { to: '/admin/personality', icon: Settings, label: 'Personality' },
   { to: '/admin/users', icon: Users, label: 'Users' },
   { to: '/admin/update', icon: Download, label: 'Update' },
+  { to: '/admin/reports', icon: FileText, label: 'Reports' },
 ]
 
 // 5 most important nav items for mobile bottom bar
@@ -38,6 +40,19 @@ const MOBILE_NAV = [
 export default function Layout({ children, role, notification }: Props) {
   const loc = useLocation()
   const navigate = useNavigate()
+  const [dim, setDim] = useState(() => localStorage.getItem('vantis_theme') === 'dim')
+
+  const toggleTheme = () => {
+    const next = !dim
+    setDim(next)
+    document.documentElement.classList.toggle('theme-dim', next)
+    localStorage.setItem('vantis_theme', next ? 'dim' : 'dark')
+  }
+
+  // Apply saved theme on mount
+  if (typeof document !== 'undefined') {
+    document.documentElement.classList.toggle('theme-dim', dim)
+  }
 
   const logout = () => {
     localStorage.removeItem('vantis_token')
@@ -111,6 +126,13 @@ export default function Layout({ children, role, notification }: Props) {
         )}
 
         <div className="mt-auto flex flex-col items-center">
+          <button
+            onClick={toggleTheme}
+            title={dim ? 'Switch to dark mode' : 'Switch to dim mode'}
+            className="p-2.5 text-muted hover:text-accent transition-colors"
+          >
+            {dim ? <Sun size={16} /> : <Moon size={16} />}
+          </button>
           <NotificationHistory />
           <button
             onClick={logout}

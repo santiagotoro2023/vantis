@@ -161,13 +161,22 @@ USER_CONTEXT = (
 class PersonalityManager:
     """Manages VANTIS personality versions and prompt composition."""
 
-    async def load_current(self) -> dict:
-        """Load the latest personality_versions row from DB."""
+    async def load_current(self, owner: str = 'system') -> dict:
+        """Load the latest personality_versions row from DB for the given owner.
+        Falls back to owner='system' if no user-specific version exists."""
         async with get_db() as db:
+            # Try user-specific personality first
             cursor = await db.execute(
-                "SELECT * FROM personality_versions ORDER BY version DESC LIMIT 1"
+                "SELECT * FROM personality_versions WHERE owner = ? ORDER BY version DESC LIMIT 1",
+                (owner,)
             )
             row = await cursor.fetchone()
+            # Fall back to system default if no user-specific version
+            if not row and owner != 'system':
+                cursor = await db.execute(
+                    "SELECT * FROM personality_versions WHERE owner = 'system' ORDER BY version DESC LIMIT 1"
+                )
+                row = await cursor.fetchone()
             if not row:
                 return {"version": 1, "full_config": {}, "diff": None}
             return {
@@ -180,7 +189,7 @@ class PersonalityManager:
 
     async def get_system_prompt(self, username: str, role: str) -> str:
         """Compose the full system prompt for a given user."""
-        current = await self.load_current()
+        current = await self.load_current(owner=username)
         config = current.get("full_config", {})
 
         # Allow the stored config to override the base prompt section
@@ -229,26 +238,27 @@ class PersonalityManager:
         )
         return result
 
-    async def apply_evolution(self, diff: str, new_config: dict) -> int:
+    async def apply_evolution(self, diff: str, new_config: dict, owner: str = 'system') -> int:
         """Save a new personality version to the database."""
-        current = await self.load_current()
+        current = await self.load_current(owner=owner)
         new_version = current.get("version", 1) + 1
         async with get_db() as db:
             cursor = await db.execute(
-                "INSERT INTO personality_versions (version, diff, full_config) "
-                "VALUES (?, ?, ?)",
-                (new_version, diff, json.dumps(new_config)),
+                "INSERT INTO personality_versions (version, diff, full_config, owner) "
+                "VALUES (?, ?, ?, ?)",
+                (new_version, diff, json.dumps(new_config), owner),
             )
             await db.commit()
-            logger.info("Personality evolved to version %d.", new_version)
+            logger.info("Personality evolved to version %d (owner=%s).", new_version, owner)
             return cursor.lastrowid
 
-    async def get_all_versions(self) -> list[dict]:
-        """Return all personality versions, newest first."""
+    async def get_all_versions(self, owner: str = 'system') -> list[dict]:
+        """Return all personality versions for the given owner, newest first."""
         async with get_db() as db:
             cursor = await db.execute(
-                "SELECT id, version, diff, created_at FROM personality_versions "
-                "ORDER BY version DESC"
+                "SELECT id, version, diff, created_at, owner FROM personality_versions "
+                "WHERE owner = ? ORDER BY version DESC",
+                (owner,)
             )
             rows = await cursor.fetchall()
             return [
@@ -257,6 +267,7 @@ class PersonalityManager:
                     "version": r["version"],
                     "diff": r["diff"],
                     "created_at": r["created_at"],
+                    "owner": r["owner"],
                 }
                 for r in rows
             ]

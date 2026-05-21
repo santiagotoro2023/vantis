@@ -210,6 +210,29 @@ export const api = {
     return ctrl
   },
 
+  decomposeGoal: (id: number) => request(`/goals/${id}/decompose`, { method: 'POST' }),
+
+  uploadMemoryFile: (file: File) => {
+    const form = new FormData()
+    form.append('file', file)
+    const token = localStorage.getItem('vantis_token')
+    return fetch('/api/memory/upload', {
+      method: 'POST',
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+      body: form,
+    }).then(r => r.ok ? r.json() : r.json().then((e: { detail?: string }) => Promise.reject(new Error(e.detail || 'Upload failed'))))
+  },
+
+  generateReport: () => request('/admin/reports/generate', { method: 'POST' }),
+
+  setWebhook: (url: string, schedule: string) =>
+    request('/admin/reports/webhook', { method: 'POST', body: JSON.stringify({ url, schedule }) }),
+
+  exportSession: (sessionId: string) =>
+    fetch(`/api/chat/sessions/${sessionId}/export`, {
+      headers: { Authorization: `Bearer ${localStorage.getItem('vantis_token') || ''}` },
+    }),
+
   speak: (text: string): Promise<void> =>
     fetch('/api/tts/speak', {
       method: 'POST',
