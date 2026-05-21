@@ -241,6 +241,16 @@ async def rename_session(
     return {"status": "Renamed. A label on a jar does not change what is inside."}
 
 
+@router.delete("/sessions/{session_id}")
+async def delete_session(session_id: str, user: dict = Depends(get_current_user)):
+    """Delete a conversation session and all its messages."""
+    async with get_db() as db:
+        await db.execute("DELETE FROM conversations WHERE session_id = ?", (session_id,))
+        await db.execute("DELETE FROM conversation_sessions WHERE session_id = ?", (session_id,))
+        await db.commit()
+    return {"status": "Session deleted."}
+
+
 @router.post("/stream")
 async def stream_message(msg: ChatMessage, user: dict = Depends(get_current_user)):
     """Streaming version of send_message. Returns Server-Sent Events."""
@@ -279,15 +289,18 @@ async def stream_message(msg: ChatMessage, user: dict = Depends(get_current_user
 
     async def generate():
         full_text = ""
+        stream_error: str | None = None
         try:
             async for chunk in ollama.chat_stream(messages=messages, system=full_system):
                 full_text += chunk
                 payload = json.dumps({"token": chunk, "session_id": session_id})
                 yield f"data: {payload}\n\n"
         except Exception as exc:
+            stream_error = str(exc)
             logger.warning("Streaming error: %s", exc)
+            yield f"data: {json.dumps({'error': stream_error, 'session_id': session_id})}\n\n"
 
-        yield f"data: {json.dumps({'done': True, 'full_text': full_text, 'session_id': session_id})}\n\n"
+        yield f"data: {json.dumps({'done': True, 'full_text': full_text, 'session_id': session_id, 'error': stream_error})}\n\n"
 
         # Persist conversation
         try:

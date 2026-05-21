@@ -298,7 +298,8 @@ function GoalPanel({
   onStatusChange?: (status: string, progress: number) => Promise<void>
 }) {
   const [editing, setEditing] = useState(false)
-  const [draft, setDraft] = useState((data.description as string) || '')
+  const descriptionText = (data.description || data.content) as string
+  const [draft, setDraft] = useState(descriptionText || '')
   const [saving, setSaving] = useState(false)
   const [progress, setProgress] = useState((data.progress as number) ?? 0)
   const [status, setStatus] = useState((data.status as string) || 'active')
@@ -347,11 +348,11 @@ function GoalPanel({
               className="w-full bg-panel border border-border text-xs font-mono text-text p-2 resize-none leading-relaxed"
               rows={5}
             />
-            <EditActions saving={saving} onSave={save} onCancel={() => { setEditing(false); setDraft(data.description as string) }} />
+            <EditActions saving={saving} onSave={save} onCancel={() => { setEditing(false); setDraft(descriptionText) }} />
           </div>
         ) : (
           <div>
-            <p className="text-xs text-text leading-relaxed whitespace-pre-wrap">{data.description as string}</p>
+            <p className="text-xs text-text leading-relaxed whitespace-pre-wrap">{descriptionText}</p>
             {isAdmin && (
               <button onClick={() => setEditing(true)} className="mt-2 text-[10px] font-mono text-muted hover:text-accent transition-colors">
                 EDIT DESCRIPTION

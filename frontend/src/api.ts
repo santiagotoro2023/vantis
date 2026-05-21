@@ -61,6 +61,9 @@ export const api = {
   searchSessions: (query: string) =>
     request<Array<{ session_id: string; name?: string; started: string; message_count: number; snippet?: string }>>(`/chat/sessions/search?q=${encodeURIComponent(query)}`),
 
+  deleteSession: (sessionId: string) =>
+    request(`/chat/sessions/${sessionId}`, { method: 'DELETE' }),
+
   endSession: () => request('/chat/end-session', { method: 'POST' }),
 
   // Brain
@@ -188,7 +191,14 @@ export const api = {
               const data = JSON.parse(line.slice(6))
               if (data.token) onToken?.(data.token)
               if (data.session_id) resolvedSessionId = data.session_id
-              if (data.done) onDone?.(data.full_text || '', resolvedSessionId)
+              if (data.error && !data.done) onError?.(new Error(data.error))
+              if (data.done) {
+                if (!data.full_text && data.error) {
+                  onError?.(new Error(data.error || 'No response from model. Is Ollama running?'))
+                } else {
+                  onDone?.(data.full_text || '', resolvedSessionId)
+                }
+              }
             } catch {}
           }
         }

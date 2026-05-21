@@ -70,7 +70,7 @@ export default function NotificationHistory() {
 
       {open && (
         <div
-          className="absolute right-0 top-full mt-1 bg-surface border border-border shadow-xl z-50"
+          className="absolute left-full ml-2 bottom-0 bg-surface border border-border shadow-xl z-50"
           style={{ width: 280 }}
         >
           <div className="px-3 py-2 border-b border-border flex items-center justify-between">

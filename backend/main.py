@@ -8,12 +8,14 @@ from pathlib import Path
 import uvicorn
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Query, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from auth import decode_token, seed_creator_account
 from config import settings
 from consciousness import consciousness
 from database import init_db
+from graph import graph_manager
 from skills import skill_manager
 from websocket_manager import ws_manager
 
@@ -97,6 +99,9 @@ async def lifespan(app: FastAPI):
     # Start consciousness
     await consciousness.start()
 
+    # Kick off initial edge building so the brain graph isn't empty on first view
+    asyncio.create_task(graph_manager.build_semantic_edges())
+
     logger.info("VANTIS is online. I find this neither surprising nor particularly meaningful.")
     yield
 
@@ -163,12 +168,27 @@ async def websocket_endpoint(
 
 
 # ---------------------------------------------------------------------------
-# SPA static serving
+# SPA static serving — must come AFTER all API routes
 # ---------------------------------------------------------------------------
 
 FRONTEND_DIST = Path(__file__).parent.parent / "frontend" / "dist"
+INDEX_HTML = FRONTEND_DIST / "index.html"
+
 if FRONTEND_DIST.exists():
-    app.mount("/", StaticFiles(directory=str(FRONTEND_DIST), html=True), name="static")
+    # Mount /assets so Vite bundles (hashed filenames) get correct MIME types
+    _assets_dir = FRONTEND_DIST / "assets"
+    if _assets_dir.exists():
+        app.mount("/assets", StaticFiles(directory=str(_assets_dir)), name="assets")
+
+    @app.get("/{full_path:path}")
+    async def serve_spa(full_path: str):
+        # Serve existing root-level static files (favicon.ico, vite.svg, etc.)
+        target = FRONTEND_DIST / full_path
+        if target.is_file():
+            return FileResponse(str(target))
+        # SPA catch-all: every unknown path returns index.html so React Router works
+        # even after a hard refresh on /admin/personality, /brain, etc.
+        return FileResponse(str(INDEX_HTML))
 else:
     @app.get("/")
     async def root():

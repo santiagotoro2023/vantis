@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { api } from '../api'
 import type { User } from '../types'
 import { Plus, Trash2, Key } from 'lucide-react'
@@ -8,6 +8,11 @@ export default function UserManagement() {
   const [newUser, setNewUser] = useState({ username: '', password: '', role: 'user' })
   const [resetPw, setResetPw] = useState<{ username: string; pw: string } | null>(null)
   const [status, setStatus] = useState('')
+
+  const showStatus = useCallback((msg: string) => {
+    setStatus(msg)
+    setTimeout(() => setStatus(''), 5000)
+  }, [])
 
   const load = async () => {
     const data = await api.getUsers() as User[]
@@ -21,23 +26,23 @@ export default function UserManagement() {
     try {
       await api.createUser(newUser.username, newUser.password, newUser.role)
       setNewUser({ username: '', password: '', role: 'user' })
-      setStatus(`User '${newUser.username}' created.`)
+      showStatus(`User '${newUser.username}' created.`)
       load()
     } catch (err) {
-      setStatus(err instanceof Error ? err.message : 'Creation failed.')
+      showStatus(err instanceof Error ? err.message : 'Creation failed.')
     }
   }
 
   const deleteUser = async (username: string) => {
     await api.deleteUser(username)
-    setStatus(`User '${username}' removed.`)
+    showStatus(`User '${username}' removed.`)
     load()
   }
 
   const resetPassword = async () => {
     if (!resetPw || !resetPw.pw) return
     await api.resetPassword(resetPw.username, resetPw.pw)
-    setStatus(`Password reset for '${resetPw.username}'.`)
+    showStatus(`Password reset for '${resetPw.username}'.`)
     setResetPw(null)
   }
 

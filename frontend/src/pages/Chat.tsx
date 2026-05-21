@@ -28,9 +28,16 @@ interface BrainStats {
   active_goals: number
 }
 
+function parseUTC(dateStr: string): number {
+  if (!dateStr) return Date.now()
+  // SQLite CURRENT_TIMESTAMP has no timezone — treat as UTC
+  const s = dateStr.includes('T') ? dateStr : dateStr.replace(' ', 'T') + 'Z'
+  return new Date(s).getTime()
+}
+
 function timeAgo(dateStr: string): string {
   if (!dateStr) return ''
-  const diff = Date.now() - new Date(dateStr).getTime()
+  const diff = Date.now() - parseUTC(dateStr)
   const mins = Math.floor(diff / 60000)
   if (mins < 1) return 'just now'
   if (mins < 60) return `${mins}m ago`
@@ -88,6 +95,7 @@ export default function Chat() {
   const [renameValue, setRenameValue] = useState('')
   const [ttsEnabled, setTtsEnabled] = useState(() => localStorage.getItem('vantis_tts') === '1')
   const [sidebarOpen, setSidebarOpen] = useState(false)
+  const [ctxMenu, setCtxMenu] = useState<{ session: ChatSession; x: number; y: number } | null>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const renameInputRef = useRef<HTMLInputElement>(null)
   const abortRef = useRef<AbortController | null>(null)
@@ -273,8 +281,19 @@ export default function Chat() {
   }
 
   const startRename = (session: ChatSession) => {
+    setCtxMenu(null)
     setRenamingId(session.session_id)
     setRenameValue(session.name || '')
+  }
+
+  const deleteSession = async (sid: string) => {
+    setCtxMenu(null)
+    await api.deleteSession(sid).catch(() => {})
+    if (sessionId === sid) {
+      setSessionId(undefined)
+      setMessages([])
+    }
+    await loadSessions()
   }
 
   const saveRename = async (sid: string) => {
@@ -352,7 +371,10 @@ export default function Chat() {
             <div
               key={session.session_id}
               onClick={() => !isRenaming && loadSession(session.session_id)}
-              onDoubleClick={() => startRename(session)}
+              onContextMenu={e => {
+                e.preventDefault()
+                setCtxMenu({ session, x: e.clientX, y: e.clientY })
+              }}
               className={`px-3 py-2.5 cursor-pointer transition-colors border-l-2 ${
                 isActive
                   ? 'bg-accent/10 border-l-accent'
@@ -396,7 +418,33 @@ export default function Chat() {
     </div>
   )
 
+  // Context menu rendered at document level so it can escape the sidebar
+  const ContextMenu = ctxMenu ? (
+    <>
+      <div className="fixed inset-0 z-[60]" onClick={() => setCtxMenu(null)} />
+      <div
+        className="fixed z-[61] bg-surface border border-border shadow-xl py-1 min-w-[140px]"
+        style={{ left: ctxMenu.x, top: ctxMenu.y }}
+      >
+        <button
+          onClick={() => startRename(ctxMenu.session)}
+          className="w-full text-left px-3 py-1.5 text-[11px] font-mono text-text hover:bg-accent/10 hover:text-accent transition-colors"
+        >
+          Rename
+        </button>
+        <button
+          onClick={() => deleteSession(ctxMenu.session.session_id)}
+          className="w-full text-left px-3 py-1.5 text-[11px] font-mono text-danger hover:bg-danger/10 transition-colors"
+        >
+          Delete
+        </button>
+      </div>
+    </>
+  ) : null
+
   return (
+    <>
+    {ContextMenu}
     <div className="h-full flex">
       {/* Sessions sidebar — desktop: always visible, mobile: overlay */}
       <div className="hidden md:flex w-[220px] shrink-0 border-r border-border bg-surface flex-col overflow-hidden">
@@ -518,7 +566,7 @@ export default function Chat() {
                   <div className="whitespace-pre-wrap">{msg.content}</div>
                 )}
                 <div className="text-xs text-muted mt-1.5">
-                  {new Date(msg.timestamp).toLocaleTimeString()}
+                  {new Date(parseUTC(msg.timestamp)).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false })}
                 </div>
               </div>
             </div>
@@ -596,5 +644,6 @@ export default function Chat() {
         </div>
       </div>
     </div>
+    </>
   )
 }
