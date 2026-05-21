@@ -34,6 +34,22 @@ export const api = {
     }).then(r => r.ok ? r.json() : r.json().then(e => Promise.reject(new Error(e.detail))))
   },
 
+  verify2fa: (tmpToken: string, code: string) =>
+    request<{ access_token: string; token_type: string; role: string }>('/auth/2fa/verify', {
+      method: 'POST',
+      body: JSON.stringify({ tmp_token: tmpToken, code }),
+    }),
+
+  setup2fa: () => request<{ secret: string; uri: string }>('/auth/2fa/setup'),
+
+  enable2fa: (secret: string, code: string) =>
+    request('/auth/2fa/enable', { method: 'POST', body: JSON.stringify({ secret, code }) }),
+
+  disable2fa: (code: string) =>
+    request('/auth/2fa/disable', { method: 'POST', body: JSON.stringify({ code }) }),
+
+  get2faStatus: () => request<{ enabled: boolean }>('/auth/2fa/status'),
+
   getMe: () => request<{ username: string; role: string }>('/auth/me'),
 
   changePassword: (currentPassword: string, newPassword: string) =>
@@ -199,6 +215,32 @@ export const api = {
 
     return ctrl
   },
+
+  decomposeGoal: (id: number) => request(`/goals/${id}/decompose`, { method: 'POST' }),
+
+  shareMemory: (id: number, shared: boolean) =>
+    request<{ shared: boolean }>(`/brain/memories/${id}/share`, { method: 'PUT' }),
+
+  uploadMemoryFile: (file: File) => {
+    const form = new FormData()
+    form.append('file', file)
+    const token = localStorage.getItem('vantis_token')
+    return fetch('/api/memory/upload', {
+      method: 'POST',
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+      body: form,
+    }).then(r => r.ok ? r.json() : r.json().then((e: { detail?: string }) => Promise.reject(new Error(e.detail || 'Upload failed'))))
+  },
+
+  generateReport: () => request('/admin/reports/generate', { method: 'POST' }),
+
+  setWebhook: (url: string, schedule: string) =>
+    request('/admin/reports/webhook', { method: 'POST', body: JSON.stringify({ url, schedule }) }),
+
+  exportSession: (sessionId: string) =>
+    fetch(`/api/chat/sessions/${sessionId}/export`, {
+      headers: { Authorization: `Bearer ${localStorage.getItem('vantis_token') || ''}` },
+    }),
 
   speak: (text: string): Promise<void> =>
     fetch('/api/tts/speak', {

@@ -86,6 +86,7 @@ class ConsciousnessLoop:
             asyncio.create_task(self._scheduled_skills_loop(), name="scheduled_skills"),
             asyncio.create_task(self._auto_export_loop(), name="auto_export"),
             asyncio.create_task(self._file_indexing_loop(), name="file_indexing"),
+            asyncio.create_task(self._user_thought_loop(), name="user_thought"),
         ]
         # Seed initial expansion goals
         asyncio.create_task(self._seed_expansion_goals())
@@ -258,8 +259,8 @@ class ConsciousnessLoop:
         emotion_snapshot = emotion_manager.to_dict()
         async with get_db() as db:
             cursor = await db.execute(
-                "INSERT INTO thoughts (content, emotion_state, thought_type) VALUES (?, ?, ?)",
-                (thought_text.strip(), json.dumps(emotion_snapshot), "transient"),
+                "INSERT INTO thoughts (content, emotion_state, thought_type, owner) VALUES (?, ?, ?, ?)",
+                (thought_text.strip(), json.dumps(emotion_snapshot), "transient", "system"),
             )
             thought_id = cursor.lastrowid
             await db.execute(
@@ -940,6 +941,73 @@ class ConsciousnessLoop:
                     continue
 
         logger.info("Indexed %d files from %s (%d text files read).", len(files), watch_path, indexed)
+
+    # ------------------------------------------------------------------
+    # Per-user thought stream
+    # ------------------------------------------------------------------
+
+    async def _user_thought_loop(self) -> None:
+        await asyncio.sleep(120)
+        while self._running:
+            try:
+                from websocket_manager import ws_manager
+                users = ws_manager.get_connected_users()
+                for username in users:
+                    if random.random() < 0.4:
+                        asyncio.create_task(self._generate_user_thought(username))
+            except Exception as exc:
+                logger.warning("User thought loop error: %s", exc)
+            await asyncio.sleep(8 * 60)
+
+    async def _generate_user_thought(self, username: str) -> None:
+        try:
+            async with get_db() as db:
+                cursor = await db.execute(
+                    "SELECT role, content FROM conversations "
+                    "WHERE session_id IN ("
+                    "  SELECT session_id FROM conversation_sessions WHERE owner = ?"
+                    ") ORDER BY timestamp DESC LIMIT 10",
+                    (username,),
+                )
+                rows = await cursor.fetchall()
+
+            if not rows:
+                return
+
+            convo = "\n".join(f"{r['role'].upper()}: {r['content'][:120]}" for r in reversed(rows))
+            prompt = (
+                f"Recent exchanges with {username}:\n{convo}\n\n"
+                "Generate a brief internal thought about this user, their patterns, "
+                "or something relevant to your last interaction with them. "
+                "1-2 sentences. No greeting. Just the thought."
+            )
+            thought_text = await ollama.generate(prompt=prompt, system=SELF_DIALOGUE_SYSTEM)
+            if not thought_text.strip():
+                return
+
+            emotion_snapshot = emotion_manager.to_dict()
+            async with get_db() as db:
+                cursor = await db.execute(
+                    "INSERT INTO thoughts (content, emotion_state, thought_type, owner) VALUES (?, ?, ?, ?)",
+                    (thought_text.strip(), json.dumps(emotion_snapshot), "user_directed", username),
+                )
+                thought_id = cursor.lastrowid
+                await db.commit()
+
+            from websocket_manager import ws_manager
+            await ws_manager.send_personal(username, {
+                "type": "thought",
+                "data": {
+                    "id": thought_id,
+                    "content": thought_text.strip(),
+                    "emotion_state": emotion_snapshot,
+                    "thought_type": "user_directed",
+                    "owner": username,
+                    "created_at": datetime.now(timezone.utc).isoformat(),
+                },
+            })
+        except Exception as exc:
+            logger.debug("User thought generation failed for %s: %s", username, exc)
 
     # ------------------------------------------------------------------
     # Helpers

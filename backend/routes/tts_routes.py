@@ -36,7 +36,25 @@ def _get_kokoro():
             return _kokoro
         try:
             from kokoro_onnx import Kokoro
-            _kokoro = Kokoro()          # auto-downloads model files on first call
+            try:
+                _kokoro = Kokoro()      # kokoro-onnx < 0.4
+            except TypeError:
+                # kokoro-onnx >= 0.4 requires explicit paths — download them first
+                import os, urllib.request
+                model_path = os.path.expanduser("~/.cache/kokoro/kokoro-v0_19.onnx")
+                voices_path = os.path.expanduser("~/.cache/kokoro/voices.bin")
+                os.makedirs(os.path.dirname(model_path), exist_ok=True)
+                if not os.path.exists(model_path):
+                    urllib.request.urlretrieve(
+                        "https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files/kokoro-v0_19.onnx",
+                        model_path,
+                    )
+                if not os.path.exists(voices_path):
+                    urllib.request.urlretrieve(
+                        "https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files/voices.bin",
+                        voices_path,
+                    )
+                _kokoro = Kokoro(model_path, voices_path)
             _kokoro_ready = True
             logger.info("Kokoro TTS model loaded.")
         except Exception as exc:

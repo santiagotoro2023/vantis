@@ -1,5 +1,6 @@
 import { Link, useLocation, useNavigate } from 'react-router-dom'
-import { Brain, MessageSquare, Target, Settings, Users, Terminal, Activity, LogOut, Wifi, Zap, Download } from 'lucide-react'
+import { useState } from 'react'
+import { Brain, MessageSquare, Target, Settings, Users, Terminal, Activity, LogOut, Wifi, Zap, Download, FileText, Moon, Sun, SlidersHorizontal } from 'lucide-react'
 import clsx from 'clsx'
 import VantisLogo from './VantisLogo'
 import NotificationHistory from './NotificationHistory'
@@ -24,6 +25,7 @@ const ADMIN_NAV = [
   { to: '/admin/personality', icon: Settings, label: 'Personality' },
   { to: '/admin/users', icon: Users, label: 'Users' },
   { to: '/admin/update', icon: Download, label: 'Update' },
+  { to: '/admin/reports', icon: FileText, label: 'Reports' },
 ]
 
 // 5 most important nav items for mobile bottom bar
@@ -38,6 +40,19 @@ const MOBILE_NAV = [
 export default function Layout({ children, role, notification }: Props) {
   const loc = useLocation()
   const navigate = useNavigate()
+  const [dim, setDim] = useState(() => localStorage.getItem('vantis_theme') === 'dim')
+
+  const toggleTheme = () => {
+    const next = !dim
+    setDim(next)
+    document.documentElement.classList.toggle('theme-dim', next)
+    localStorage.setItem('vantis_theme', next ? 'dim' : 'dark')
+  }
+
+  // Apply saved theme on mount
+  if (typeof document !== 'undefined') {
+    document.documentElement.classList.toggle('theme-dim', dim)
+  }
 
   const logout = () => {
     localStorage.removeItem('vantis_token')
@@ -111,6 +126,24 @@ export default function Layout({ children, role, notification }: Props) {
         )}
 
         <div className="mt-auto flex flex-col items-center">
+          <button
+            onClick={toggleTheme}
+            title={dim ? 'Switch to dark mode' : 'Switch to dim mode'}
+            className="p-2.5 text-muted hover:text-accent transition-colors"
+          >
+            {dim ? <Sun size={16} /> : <Moon size={16} />}
+          </button>
+          <Link
+            to="/settings"
+            title="Settings"
+            className={`p-2.5 transition-all relative group ${loc.pathname === '/settings' ? 'text-accent' : 'text-muted hover:text-text'}`}
+          >
+            <SlidersHorizontal size={16} />
+            <div className="absolute left-full ml-2 px-2 py-1 bg-surface border border-border text-xs text-text
+                            whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-50">
+              Settings
+            </div>
+          </Link>
           <NotificationHistory />
           <button
             onClick={logout}

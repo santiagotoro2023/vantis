@@ -51,6 +51,19 @@ def create_token(username: str, role: str) -> str:
     return jwt.encode(payload, settings.SECRET_KEY, algorithm=ALGORITHM)
 
 
+def create_2fa_tmp_token(username: str, role: str) -> str:
+    """Short-lived token issued when 2FA is required. Cannot access protected endpoints."""
+    expire = datetime.now(timezone.utc) + timedelta(minutes=5)
+    payload = {
+        "sub": username,
+        "role": role,
+        "scope": "2fa_pending",
+        "exp": expire,
+        "iat": datetime.now(timezone.utc),
+    }
+    return jwt.encode(payload, settings.SECRET_KEY, algorithm=ALGORITHM)
+
+
 def decode_token(token: str) -> dict:
     """Decode and validate a JWT token. Raises HTTPException on failure."""
     try:
@@ -111,6 +124,12 @@ async def get_current_user(token: str = Depends(oauth2_scheme)) -> dict:
             headers={"WWW-Authenticate": "Bearer"},
         )
     payload = decode_token(token)
+    if payload.get("scope") == "2fa_pending":
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Two-factor authentication required.",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
     username: Optional[str] = payload.get("sub")
     if not username:
         raise HTTPException(

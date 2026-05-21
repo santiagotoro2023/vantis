@@ -42,6 +42,9 @@ class ConnectionManager:
     def active_count(self) -> int:
         return len(self._connections)
 
+    def get_connected_users(self) -> list[str]:
+        return list(self._connections.keys())
+
     # ------------------------------------------------------------------
     # Typed broadcast helpers
     # ------------------------------------------------------------------
