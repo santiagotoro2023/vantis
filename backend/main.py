@@ -28,6 +28,7 @@ from routes.sandbox_routes import router as sandbox_router
 from routes.skills_routes import router as skills_router
 from routes.update_routes import router as update_router
 from routes.tts_routes import router as tts_router
+from routes.memory_routes import router as memory_router
 
 logging.basicConfig(
     level=logging.INFO,
@@ -134,6 +135,7 @@ app.include_router(sandbox_router)
 app.include_router(skills_router)
 app.include_router(update_router)
 app.include_router(tts_router)
+app.include_router(memory_router)
 
 
 # ---------------------------------------------------------------------------
