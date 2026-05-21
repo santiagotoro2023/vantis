@@ -91,6 +91,10 @@ export default function Chat() {
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const renameInputRef = useRef<HTMLInputElement>(null)
   const abortRef = useRef<AbortController | null>(null)
+  // Sentence-level TTS queue for parallel streaming playback
+  const ttsBufferRef = useRef('')
+  const ttsQueueRef = useRef<HTMLAudioElement[]>([])
+  const ttsPlayingRef = useRef(false)
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
@@ -135,15 +139,53 @@ export default function Chat() {
 
   useWebSocket(handleWs)
 
+  // Enqueue a sentence for sequential TTS playback
+  const enqueueTTS = useCallback(async (sentence: string) => {
+    if (!sentence.trim() || sentence.trim().length < 4) return
+    try {
+      const token = localStorage.getItem('vantis_token')
+      const res = await fetch('/api/tts/sentence', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify({ text: sentence.trim() }),
+      })
+      if (!res.ok) return
+      const blob = await res.blob()
+      const url = URL.createObjectURL(blob)
+      const audio = new Audio(url)
+      audio.onended = () => {
+        URL.revokeObjectURL(url)
+        ttsQueueRef.current.shift()
+        if (ttsQueueRef.current.length > 0) {
+          ttsQueueRef.current[0].play().catch(() => {})
+        } else {
+          ttsPlayingRef.current = false
+        }
+      }
+      ttsQueueRef.current.push(audio)
+      if (!ttsPlayingRef.current) {
+        ttsPlayingRef.current = true
+        audio.play().catch(() => {})
+      }
+    } catch { /* best-effort */ }
+  }, [])
+
   const send = async () => {
     if (!input.trim() || loading) return
     const userMsg = input.trim()
     setInput('')
     setMessages(prev => [...prev, { role: 'user', content: userMsg, timestamp: new Date().toISOString() }])
     setLoading(true)
+    // Reset TTS sentence buffer
+    ttsBufferRef.current = ''
 
     // Add placeholder assistant message that we'll stream into
     setMessages(prev => [...prev, { role: 'assistant', content: '', timestamp: new Date().toISOString(), streaming: true }])
+
+    const ttsEnabledNow = ttsEnabled
 
     abortRef.current = api.streamMessage(
       userMsg,
@@ -158,8 +200,19 @@ export default function Chat() {
           }
           return updated
         })
-        // Hide loading dots once first token arrives
         setLoading(false)
+
+        // Sentence-level TTS: buffer tokens and fire per sentence
+        if (ttsEnabledNow) {
+          ttsBufferRef.current += token
+          // Detect sentence boundary: [.!?] followed by space/newline or at buffer end
+          const match = ttsBufferRef.current.match(/^(.*?[.!?])(\s|$)/s)
+          if (match && match[1].length >= 8) {
+            const sentence = match[1]
+            ttsBufferRef.current = ttsBufferRef.current.slice(sentence.length).trimStart()
+            enqueueTTS(sentence)
+          }
+        }
       },
       (fullText, sid) => {
         setSessionId(sid || sessionId)
@@ -173,9 +226,10 @@ export default function Chat() {
         })
         setLoading(false)
         loadSessions()
-        // TTS on completion
-        if (ttsEnabled && fullText) {
-          api.speak(fullText.slice(0, 300)).catch(() => {})
+        // Flush any remaining buffered text as final TTS chunk
+        if (ttsEnabledNow && ttsBufferRef.current.trim()) {
+          enqueueTTS(ttsBufferRef.current.trim())
+          ttsBufferRef.current = ''
         }
       },
       (_err) => {

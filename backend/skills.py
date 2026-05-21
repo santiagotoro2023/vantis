@@ -219,19 +219,51 @@ except Exception as e:
 # SkillManager
 # ---------------------------------------------------------------------------
 
+WEB_SEARCH_SKILL = {
+    "name": "web_search",
+    "description": "Search the web using DuckDuckGo. Takes a query as argument and returns top results.",
+    "code": """
+import json
+try:
+    from duckduckgo_search import DDGS
+    query = args[0] if args else "VANTIS AI system"
+    results = []
+    with DDGS() as ddgs:
+        for r in ddgs.text(query, max_results=5):
+            results.append({
+                "title": r.get("title", ""),
+                "body": r.get("body", "")[:200],
+                "url": r.get("href", ""),
+            })
+    print(json.dumps(results, indent=2))
+except ImportError:
+    print("duckduckgo_search not installed. Run: pip install duckduckgo-search")
+except Exception as e:
+    print(f"Search failed: {e}")
+""",
+    "trigger_conditions": "search, look up, find information about, what is, who is, current events",
+    "is_builtin": 1,
+}
+
+
 class SkillManager:
 
     async def init_builtin_skills(self) -> None:
         await ensure_skills_table()
+
+        async def _upsert_builtin(db, skill: dict) -> None:
+            await db.execute(
+                """INSERT OR IGNORE INTO skills
+                   (name, description, code, trigger_conditions, is_builtin, enabled, author)
+                   VALUES (?, ?, ?, ?, ?, 1, 'builtin')""",
+                (skill["name"], skill["description"], skill["code"].strip(),
+                 skill.get("trigger_conditions", ""), skill.get("is_builtin", 1)),
+            )
+
         async with get_db() as db:
             for skill in BUILTIN_SKILLS:
-                await db.execute(
-                    """INSERT OR IGNORE INTO skills
-                       (name, description, code, trigger_conditions, is_builtin, enabled, author)
-                       VALUES (?, ?, ?, ?, ?, 1, 'builtin')""",
-                    (skill["name"], skill["description"], skill["code"].strip(),
-                     skill.get("trigger_conditions", ""), skill["is_builtin"]),
-                )
+                await _upsert_builtin(db, skill)
+            await _upsert_builtin(db, WEB_SEARCH_SKILL)
             await db.commit()
         logger.info("Built-in skills initialised.")
 

@@ -1,6 +1,6 @@
 import json
 import logging
-from typing import AsyncGenerator, Optional
+from typing import AsyncGenerator, Optional, AsyncIterator
 
 import httpx
 
@@ -108,6 +108,38 @@ class OllamaClient:
         response.raise_for_status()
         data = response.json()
         return data.get("message", {}).get("content", "")
+
+    async def chat_stream(
+        self,
+        messages: list[dict],
+        system: Optional[str] = None,
+        model: Optional[str] = None,
+    ) -> AsyncGenerator[str, None]:
+        """Streaming version of chat(). Yields text chunks as they arrive."""
+        full_messages = []
+        if system:
+            full_messages.append({"role": "system", "content": system})
+        full_messages.extend(messages)
+        payload = {
+            "model": model or self.model,
+            "messages": full_messages,
+            "stream": True,
+            "keep_alive": "24h",
+        }
+        async with self._client.stream("POST", "/api/chat", json=payload, timeout=CHAT_TIMEOUT) as resp:
+            resp.raise_for_status()
+            async for line in resp.aiter_lines():
+                if not line.strip():
+                    continue
+                try:
+                    chunk = json.loads(line)
+                    token = chunk.get("message", {}).get("content", "")
+                    if token:
+                        yield token
+                    if chunk.get("done", False):
+                        break
+                except json.JSONDecodeError:
+                    continue
 
     async def embeddings(self, text: str) -> list[float]:
         """

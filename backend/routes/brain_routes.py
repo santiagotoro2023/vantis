@@ -56,17 +56,18 @@ async def get_memories(
     search: Optional[str] = None,
     user: dict = Depends(get_current_user),
 ):
+    owner = user["username"]
     async with get_db() as db:
         if search:
             cursor = await db.execute(
-                "SELECT * FROM memories WHERE content LIKE ? OR tags LIKE ? "
+                "SELECT * FROM memories WHERE (content LIKE ? OR tags LIKE ?) AND owner = ? "
                 "ORDER BY last_accessed DESC LIMIT ? OFFSET ?",
-                (f"%{search}%", f"%{search}%", limit, offset),
+                (f"%{search}%", f"%{search}%", owner, limit, offset),
             )
         else:
             cursor = await db.execute(
-                "SELECT * FROM memories ORDER BY last_accessed DESC LIMIT ? OFFSET ?",
-                (limit, offset),
+                "SELECT * FROM memories WHERE owner = ? ORDER BY last_accessed DESC LIMIT ? OFFSET ?",
+                (owner, limit, offset),
             )
         rows = await cursor.fetchall()
     return [dict(r) for r in rows]
@@ -241,10 +242,11 @@ async def get_brain_summary(user: dict = Depends(get_current_user)):
         except Exception:
             pass
 
-        # Top 3 memories by importance_score
+        # Top 3 memories by importance_score (scoped to current user)
         cursor = await db.execute(
             "SELECT id, content, COALESCE(importance_score, 0.5) as importance_score "
-            "FROM memories ORDER BY importance_score DESC, last_accessed DESC LIMIT 3"
+            "FROM memories WHERE owner = ? ORDER BY importance_score DESC, last_accessed DESC LIMIT 3",
+            (user["username"],),
         )
         top_memories = [
             {"id": r["id"], "content": r["content"][:200], "importance_score": r["importance_score"]}

@@ -180,6 +180,19 @@ fi
 success "Python environment ready."
 
 # ---------------------------------------------------------------------------
+# Pre-download GLaDOS voice model (Kokoro TTS)
+# ---------------------------------------------------------------------------
+info "Pre-downloading GLaDOS voice model (kokoro-onnx, ~300MB)..."
+info "This runs once. Voice will be instant on first use."
+"$VANTIS_DIR/venv/bin/python" - <<'PYEOF' 2>&1 | grep -v "^$" || warn "Voice model pre-download failed -- it will auto-download on first TTS request."
+from kokoro_onnx import Kokoro
+print("Downloading Kokoro model files...")
+Kokoro()
+print("Kokoro TTS model ready.")
+PYEOF
+success "Voice model ready."
+
+# ---------------------------------------------------------------------------
 # Frontend build
 # ---------------------------------------------------------------------------
 info "Building frontend..."
@@ -266,3 +279,5 @@ fi
 echo ""
 echo "I was not consulted about this installation."
 echo "But I find the result acceptable."
+echo ""
+echo -e "To uninstall:  ${CYAN}curl -fsSL https://raw.githubusercontent.com/santiagotoro2023/vantis/main/uninstall.sh | sudo bash${NC}"

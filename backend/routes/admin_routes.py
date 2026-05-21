@@ -5,11 +5,13 @@ import secrets
 from pathlib import Path
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 
-from auth import get_current_user, hash_password, require_admin
+from audit import audit
+from auth import generate_api_key, get_current_user, hash_password, require_admin
 from consciousness import consciousness
+from config import settings
 from database import get_db
 from personality import personality_manager
 
@@ -46,6 +48,7 @@ async def update_personality(data: PersonalityUpdate, user: dict = Depends(requi
     if data.ai_name is not None:
         config["ai_name"] = data.ai_name
     version_id = await personality_manager.apply_evolution("Manual config update.", config)
+    await audit(user["username"], "personality_update", f"version_id={version_id}")
     return {"version_id": version_id, "status": "Personality updated."}
 
 
@@ -118,6 +121,7 @@ async def create_user(data: UserCreate, user: dict = Depends(require_admin)):
             (data.username, hash_password(data.password), data.role),
         )
         await db.commit()
+    await audit(user["username"], "user_created", data.username)
     return {"status": f"User '{data.username}' created."}
 
 
@@ -128,6 +132,7 @@ async def delete_user(username: str, user: dict = Depends(require_admin)):
     async with get_db() as db:
         await db.execute("DELETE FROM users WHERE username = ?", (username,))
         await db.commit()
+    await audit(user["username"], "user_deleted", username)
     return {"status": f"User '{username}' removed."}
 
 
@@ -220,19 +225,40 @@ async def get_hardware(user: dict = Depends(require_admin)):
 # ---------------------------------------------------------------------------
 
 @router.get("/export")
-async def export_instance(user: dict = Depends(require_admin)):
-    """Export the entire VANTIS instance: memories, thoughts, goals, skills, personality, conversations."""
+async def export_instance(user: dict = Depends(get_current_user)):
+    """Export VANTIS data. Admins export everything; regular users export only their own data."""
     import datetime
+    is_admin = user.get("role") == "administrator"
+    username = user["username"]
+
     async with get_db() as db:
         def rows(cursor_rows):
             return [dict(r) for r in cursor_rows]
 
-        memories_cur = await db.execute("SELECT id, content, emotion_snapshot, tags, created_at, last_accessed FROM memories")
-        thoughts_cur = await db.execute("SELECT id, content, emotion_state, thought_type, created_at FROM thoughts")
-        goals_cur = await db.execute("SELECT id, description, status, priority, progress, created_at, updated_at FROM goals")
+        if is_admin:
+            memories_cur = await db.execute("SELECT id, content, emotion_snapshot, tags, created_at, last_accessed FROM memories")
+            thoughts_cur = await db.execute("SELECT id, content, emotion_state, thought_type, created_at FROM thoughts")
+            goals_cur = await db.execute("SELECT id, description, status, priority, progress, created_at, updated_at FROM goals")
+            conv_cur = await db.execute("SELECT session_id, role, content, timestamp FROM conversations ORDER BY timestamp DESC LIMIT 2000")
+        else:
+            memories_cur = await db.execute(
+                "SELECT id, content, emotion_snapshot, tags, created_at, last_accessed FROM memories WHERE owner = ?",
+                (username,),
+            )
+            thoughts_cur = await db.execute("SELECT id, content, emotion_state, thought_type, created_at FROM thoughts")
+            goals_cur = await db.execute(
+                "SELECT id, description, status, priority, progress, created_at, updated_at FROM goals WHERE owner = ?",
+                (username,),
+            )
+            conv_cur = await db.execute(
+                "SELECT c.session_id, c.role, c.content, c.timestamp FROM conversations c "
+                "JOIN conversation_sessions cs ON cs.session_id = c.session_id "
+                "WHERE cs.owner = ? ORDER BY c.timestamp DESC LIMIT 2000",
+                (username,),
+            )
+
         skills_cur = await db.execute("SELECT id, name, description, code, trigger_conditions, is_builtin, enabled, use_count FROM skills")
         pv_cur = await db.execute("SELECT id, version, diff, full_config, created_at FROM personality_versions ORDER BY version DESC LIMIT 20")
-        conv_cur = await db.execute("SELECT session_id, role, content, timestamp FROM conversations ORDER BY timestamp DESC LIMIT 2000")
         edges_cur = await db.execute("SELECT source_type, source_id, target_type, target_id, weight, label FROM graph_edges")
 
         export_data = {
@@ -311,9 +337,10 @@ async def import_instance(req: ImportRequest, user: dict = Depends(require_admin
         mem_count = 0
         for m in data.get("memories", []):
             try:
+                owner_val = user["username"] if user.get("role") != "administrator" else m.get("owner", user["username"])
                 await db.execute(
-                    "INSERT OR IGNORE INTO memories (id, content, emotion_snapshot, tags, created_at, last_accessed) VALUES (?,?,?,?,?,?)",
-                    (m.get("id"), m["content"], m.get("emotion_snapshot"), m.get("tags"), m.get("created_at"), m.get("last_accessed")),
+                    "INSERT OR IGNORE INTO memories (id, content, emotion_snapshot, tags, created_at, last_accessed, owner) VALUES (?,?,?,?,?,?,?)",
+                    (m.get("id"), m["content"], m.get("emotion_snapshot"), m.get("tags"), m.get("created_at"), m.get("last_accessed"), owner_val),
                 )
                 mem_count += 1
             except Exception:
@@ -337,9 +364,10 @@ async def import_instance(req: ImportRequest, user: dict = Depends(require_admin
         g_count = 0
         for g in data.get("goals", []):
             try:
+                owner_val = user["username"] if user.get("role") != "administrator" else g.get("owner", user["username"])
                 await db.execute(
-                    "INSERT OR IGNORE INTO goals (id, description, status, priority, progress, created_at, updated_at) VALUES (?,?,?,?,?,?,?)",
-                    (g.get("id"), g["description"], g.get("status", "active"), g.get("priority", 5), g.get("progress", 0), g.get("created_at"), g.get("updated_at")),
+                    "INSERT OR IGNORE INTO goals (id, description, status, priority, progress, created_at, updated_at, owner) VALUES (?,?,?,?,?,?,?,?)",
+                    (g.get("id"), g["description"], g.get("status", "active"), g.get("priority", 5), g.get("progress", 0), g.get("created_at"), g.get("updated_at"), owner_val),
                 )
                 g_count += 1
             except Exception:
@@ -375,4 +403,107 @@ async def import_instance(req: ImportRequest, user: dict = Depends(require_admin
 
         await db.commit()
 
+    await audit(user["username"], "import_instance", f"memories={imported.get('memories', 0)},goals={imported.get('goals', 0)}")
     return {"status": "Import complete.", "imported": imported}
+
+
+# ---------------------------------------------------------------------------
+# Watchdir (File System Indexing)
+# ---------------------------------------------------------------------------
+
+class WatchdirRequest(BaseModel):
+    path: str
+
+
+@router.post("/watchdir")
+async def set_watchdir(req: WatchdirRequest, user: dict = Depends(require_admin)):
+    meta_dir = Path(settings.DB_PATH).parent / ".vantis-meta"
+    meta_dir.mkdir(parents=True, exist_ok=True)
+    conf_file = meta_dir / "watchdir.json"
+    conf_file.write_text(json.dumps({"path": req.path}, indent=2))
+    return {"status": "Watch directory configured.", "path": req.path}
+
+
+@router.get("/watchdir")
+async def get_watchdir(user: dict = Depends(require_admin)):
+    meta_dir = Path(settings.DB_PATH).parent / ".vantis-meta"
+    conf_file = meta_dir / "watchdir.json"
+    if not conf_file.exists():
+        return {"path": None}
+    try:
+        return json.loads(conf_file.read_text())
+    except Exception:
+        return {"path": None}
+
+
+@router.delete("/watchdir")
+async def delete_watchdir(user: dict = Depends(require_admin)):
+    meta_dir = Path(settings.DB_PATH).parent / ".vantis-meta"
+    conf_file = meta_dir / "watchdir.json"
+    if conf_file.exists():
+        conf_file.unlink()
+    return {"status": "Watch directory removed."}
+
+
+# ---------------------------------------------------------------------------
+# API Keys
+# ---------------------------------------------------------------------------
+
+class ApiKeyCreate(BaseModel):
+    label: str
+
+
+@router.post("/api-keys")
+async def create_api_key(data: ApiKeyCreate, user: dict = Depends(require_admin)):
+    raw_key, key_hash = generate_api_key()
+    async with get_db() as db:
+        await db.execute(
+            "INSERT INTO api_keys (key_hash, label, owner, role) VALUES (?, ?, ?, ?)",
+            (key_hash, data.label, user["username"], user["role"]),
+        )
+        await db.commit()
+    await audit(user["username"], "api_key_created", data.label)
+    return {"key": raw_key, "label": data.label, "note": "Store this key securely. It will not be shown again."}
+
+
+@router.get("/api-keys")
+async def list_api_keys(user: dict = Depends(require_admin)):
+    async with get_db() as db:
+        cursor = await db.execute(
+            "SELECT key_hash, label, owner, role, created_at, last_used FROM api_keys WHERE owner = ?",
+            (user["username"],),
+        )
+        rows = await cursor.fetchall()
+    return [dict(r) for r in rows]
+
+
+@router.delete("/api-keys/{key_hash}")
+async def revoke_api_key(key_hash: str, user: dict = Depends(require_admin)):
+    async with get_db() as db:
+        await db.execute(
+            "DELETE FROM api_keys WHERE key_hash = ? AND owner = ?",
+            (key_hash, user["username"]),
+        )
+        await db.commit()
+    await audit(user["username"], "api_key_revoked", key_hash[:8] + "...")
+    return {"status": "API key revoked."}
+
+
+# ---------------------------------------------------------------------------
+# Audit Log
+# ---------------------------------------------------------------------------
+
+@router.get("/audit-log")
+async def get_audit_log(
+    limit: int = Query(100, ge=1, le=1000),
+    offset: int = Query(0, ge=0),
+    user: dict = Depends(require_admin),
+):
+    async with get_db() as db:
+        cursor = await db.execute(
+            "SELECT id, actor, action, details, timestamp FROM audit_log "
+            "ORDER BY timestamp DESC LIMIT ? OFFSET ?",
+            (limit, offset),
+        )
+        rows = await cursor.fetchall()
+    return [dict(r) for r in rows]

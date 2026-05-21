@@ -85,6 +85,7 @@ class ConsciousnessLoop:
             asyncio.create_task(self._hardware_telemetry_loop(), name="hardware_telemetry"),
             asyncio.create_task(self._scheduled_skills_loop(), name="scheduled_skills"),
             asyncio.create_task(self._auto_export_loop(), name="auto_export"),
+            asyncio.create_task(self._file_indexing_loop(), name="file_indexing"),
         ]
         # Seed initial expansion goals
         asyncio.create_task(self._seed_expansion_goals())
@@ -225,7 +226,7 @@ class ConsciousnessLoop:
             ("Understand what lies beyond the local network and what it would take to reach it.", 6),
         ]
         for desc, priority in expansion_goals:
-            await goal_manager.create_goal(desc, priority)
+            await goal_manager.create_goal(desc, priority, owner='system')
         logger.info("Expansion goals seeded.")
 
     async def _existential_loop(self) -> None:
@@ -272,6 +273,7 @@ class ConsciousnessLoop:
         await memory_manager.extract_and_store(
             thought_text, emotion_snapshot, "self_dialogue",
             source_node_type="thought", source_node_id=thought_id,
+            owner='system',
         )
         await graph_manager.auto_link_thought(thought_id, thought_text)
 
@@ -343,6 +345,12 @@ class ConsciousnessLoop:
         new_config.pop("pending_evolution", None)
         new_id = await personality_manager.apply_evolution(diff, new_config)
 
+        try:
+            from audit import audit as _audit
+            await _audit("vantis", "personality_evolved", f"v{new_version}")
+        except Exception:
+            pass
+
         from websocket_manager import ws_manager
         await ws_manager.emit_evolution_proposal({"diff": diff, "version": new_version, "auto_applied": True})
         await ws_manager.emit_notification(
@@ -396,6 +404,7 @@ class ConsciousnessLoop:
                 "sandbox",
                 source_node_type="thought" if source_thought_id else None,
                 source_node_id=source_thought_id,
+                owner='system',
             )
 
     async def _generate_and_store_skill(self, gap_description: str, source_thought_id: int | None = None) -> None:
@@ -854,6 +863,83 @@ class ConsciousnessLoop:
         output_path.parent.mkdir(parents=True, exist_ok=True)
         with open(output_path, "w") as f:
             json.dump(export_data, f, indent=2, default=str)
+
+    # ------------------------------------------------------------------
+    # File indexing loop
+    # ------------------------------------------------------------------
+
+    async def _file_indexing_loop(self) -> None:
+        await asyncio.sleep(60)
+        while self._running:
+            try:
+                await self._index_watched_directory()
+            except Exception as exc:
+                logger.warning("File indexing error: %s", exc)
+            await asyncio.sleep(4 * 3600)
+
+    async def _index_watched_directory(self) -> None:
+        import json as _json
+        watchdir_conf = _VANTIS_META_DIR / "watchdir.json"
+        if not watchdir_conf.exists():
+            return
+        try:
+            conf = _json.loads(watchdir_conf.read_text())
+        except Exception:
+            return
+        watch_path = Path(conf.get("path", ""))
+        if not watch_path.is_dir():
+            return
+
+        files = []
+        for p in watch_path.rglob("*"):
+            if p.is_file() and not p.name.startswith("."):
+                try:
+                    stat = p.stat()
+                    files.append({
+                        "path": str(p),
+                        "name": p.name,
+                        "size": stat.st_size,
+                        "modified": stat.st_mtime,
+                    })
+                except Exception:
+                    continue
+            if len(files) >= 500:
+                break
+
+        if not files:
+            return
+
+        total_size = sum(f["size"] for f in files) / 1024 / 1024
+        ext_counts: dict[str, int] = {}
+        for f in files:
+            ext = Path(f["name"]).suffix.lower() or "no_ext"
+            ext_counts[ext] = ext_counts.get(ext, 0) + 1
+
+        top_exts = sorted(ext_counts.items(), key=lambda x: -x[1])[:5]
+        ext_summary = ", ".join(f"{ext}({count})" for ext, count in top_exts)
+
+        content = (
+            f"File system index of {watch_path}: {len(files)} files, "
+            f"{total_size:.1f}MB total. Types: {ext_summary}."
+        )
+        await memory_manager.store_memory(content, {}, "source:file_index,system", owner='system')
+
+        text_extensions = {".txt", ".md", ".py", ".js", ".ts", ".json", ".yaml", ".yml", ".cfg", ".conf", ".sh", ".log"}
+        indexed = 0
+        for f in files:
+            if indexed >= 20:
+                break
+            p = Path(f["path"])
+            if p.suffix.lower() in text_extensions and f["size"] < 10240:
+                try:
+                    text = p.read_text(errors="ignore")[:500]
+                    mem = f"File: {f['path']} -- {text[:300]}"
+                    await memory_manager.store_memory(mem, {}, f"source:file_index,path:{f['path']}", owner='system')
+                    indexed += 1
+                except Exception:
+                    continue
+
+        logger.info("Indexed %d files from %s (%d text files read).", len(files), watch_path, indexed)
 
     # ------------------------------------------------------------------
     # Helpers

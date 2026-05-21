@@ -1,3 +1,4 @@
+import hashlib
 import secrets
 import logging
 from datetime import datetime, timedelta, timezone
@@ -73,8 +74,42 @@ def decode_token(token: str) -> dict:
 # FastAPI dependencies
 # ---------------------------------------------------------------------------
 
+def generate_api_key() -> tuple[str, str]:
+    """Returns (raw_key, key_hash). Store only the hash."""
+    raw = "vantis_" + secrets.token_urlsafe(32)
+    key_hash = hashlib.sha256(raw.encode()).hexdigest()
+    return raw, key_hash
+
+
+async def verify_api_key(raw_key: str) -> Optional[dict]:
+    """Returns user dict if key is valid, None otherwise."""
+    key_hash = hashlib.sha256(raw_key.encode()).hexdigest()
+    async with get_db() as db:
+        cursor = await db.execute(
+            "SELECT owner, role FROM api_keys WHERE key_hash = ?", (key_hash,)
+        )
+        row = await cursor.fetchone()
+        if row:
+            await db.execute(
+                "UPDATE api_keys SET last_used = datetime('now') WHERE key_hash = ?", (key_hash,)
+            )
+            await db.commit()
+            return {"username": row["owner"], "role": row["role"]}
+    return None
+
+
 async def get_current_user(token: str = Depends(oauth2_scheme)) -> dict:
-    """Dependency: decode token and return user payload."""
+    """Dependency: decode token and return user payload. Also accepts API keys (vantis_ prefix)."""
+    # Check if it's an API key
+    if token.startswith("vantis_"):
+        user = await verify_api_key(token)
+        if user:
+            return user
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid API key.",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
     payload = decode_token(token)
     username: Optional[str] = payload.get("sub")
     if not username:

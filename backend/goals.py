@@ -65,24 +65,36 @@ class GoalManager:
                 )
             await db.commit()
 
-    async def get_active_goals(self) -> list[dict]:
+    async def get_active_goals(self, owner: Optional[str] = None) -> list[dict]:
         async with get_db() as db:
-            cursor = await db.execute(
-                "SELECT * FROM goals WHERE status = 'active' ORDER BY priority DESC",
-            )
+            if owner is not None:
+                cursor = await db.execute(
+                    "SELECT * FROM goals WHERE status = 'active' AND owner = ? ORDER BY priority DESC",
+                    (owner,),
+                )
+            else:
+                cursor = await db.execute(
+                    "SELECT * FROM goals WHERE status = 'active' ORDER BY priority DESC",
+                )
             rows = await cursor.fetchall()
             return [dict(r) for r in rows]
 
-    async def get_all_goals(self) -> list[dict]:
+    async def get_all_goals(self, owner: Optional[str] = None) -> list[dict]:
         async with get_db() as db:
-            cursor = await db.execute(
-                "SELECT * FROM goals ORDER BY updated_at DESC",
-            )
+            if owner is not None:
+                cursor = await db.execute(
+                    "SELECT * FROM goals WHERE owner = ? ORDER BY updated_at DESC",
+                    (owner,),
+                )
+            else:
+                cursor = await db.execute(
+                    "SELECT * FROM goals ORDER BY updated_at DESC",
+                )
             rows = await cursor.fetchall()
             return [dict(r) for r in rows]
 
-    async def evaluate_goals(self, thoughts_summary: str) -> None:
-        active = await self.get_active_goals()
+    async def evaluate_goals(self, thoughts_summary: str, owner: str = 'system') -> None:
+        active = await self.get_active_goals(owner=owner)
         if not active:
             return
         goal_list = "\n".join(
@@ -123,8 +135,8 @@ class GoalManager:
         except Exception as exc:
             logger.warning("Goal evaluation failed: %s", exc)
 
-    async def generate_new_goals(self, context: str) -> list[int]:
-        active = await self.get_active_goals()
+    async def generate_new_goals(self, context: str, owner: str = 'system') -> list[int]:
+        active = await self.get_active_goals(owner=owner)
         if len(active) >= 5:
             return []
         prompt = (
@@ -145,7 +157,7 @@ class GoalManager:
             ids = []
             for p in proposals[:2]:
                 if isinstance(p.get("description"), str):
-                    gid = await self.create_goal(p["description"], p.get("priority", 5))
+                    gid = await self.create_goal(p["description"], p.get("priority", 5), owner=owner)
                     ids.append(gid)
             return ids
         except Exception as exc:

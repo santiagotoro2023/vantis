@@ -445,7 +445,7 @@ class GraphManager:
             logger.warning("compute_importance_scores failed: %s", exc)
             return {}
 
-    async def get_or_create_conversation_session(self, session_id: str) -> int:
+    async def get_or_create_conversation_session(self, session_id: str, owner: str = None) -> int:
         """Return the integer node ID for a conversation session, creating it if needed."""
         async with get_db() as db:
             cursor = await db.execute(
@@ -454,9 +454,15 @@ class GraphManager:
             row = await cursor.fetchone()
             if row:
                 return row["id"]
-            cursor = await db.execute(
-                "INSERT INTO conversation_sessions (session_id) VALUES (?)", (session_id,)
-            )
+            if owner is not None:
+                cursor = await db.execute(
+                    "INSERT INTO conversation_sessions (session_id, owner) VALUES (?, ?)",
+                    (session_id, owner),
+                )
+            else:
+                cursor = await db.execute(
+                    "INSERT INTO conversation_sessions (session_id) VALUES (?)", (session_id,)
+                )
             await db.commit()
             return cursor.lastrowid
 
