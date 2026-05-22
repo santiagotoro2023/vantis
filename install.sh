@@ -165,20 +165,27 @@ success "Ollama: $(ollama --version 2>&1 | head -1)"
 
 if ! systemctl is-active --quiet ollama 2>/dev/null; then
     info "Starting Ollama service..."
-    systemctl daemon-reload
-    if ! systemctl enable --now ollama 2>/dev/null; then
-        info "Systemd unavailable -- starting Ollama in background..."
-        ollama serve &>/dev/null &
-    fi
+    systemctl daemon-reload 2>/dev/null || true
+    systemctl enable --now ollama 2>/dev/null || true
 fi
+
+# Always verify the API is reachable; start serve in background if not
+if ! curl -sf --max-time 2 http://localhost:11434/api/version &>/dev/null; then
+    info "Ollama API not responding -- starting in background..."
+    # Kill any stale attempt first
+    pkill -f "ollama serve" 2>/dev/null || true
+    sleep 1
+    nohup ollama serve &>/tmp/ollama.log &
+fi
+
 info "Waiting for Ollama API..."
-for _i in $(seq 1 30); do
+for _i in $(seq 1 45); do
     if curl -sf --max-time 2 http://localhost:11434/api/version &>/dev/null; then
         success "Ollama API ready."
         break
     fi
-    if [[ $_i -eq 30 ]]; then
-        warn "Ollama API not ready after 60s -- model pull may fail. Run 'ollama serve' manually."
+    if [[ $_i -eq 45 ]]; then
+        warn "Ollama API not ready after 90s -- model pull may fail. Run 'ollama serve' manually."
     fi
     sleep 2
 done
@@ -209,15 +216,30 @@ success "Python environment ready."
 info "Pre-downloading GLaDOS voice model (kokoro-onnx, ~300MB)..."
 info "This runs once. Voice will be instant on first use."
 "$VANTIS_DIR/venv/bin/python" - <<'PYEOF' 2>&1 | grep -v "^$" || warn "Voice model pre-download failed -- it will auto-download on first TTS request."
+import os, urllib.request
 from kokoro_onnx import Kokoro
 print("Downloading Kokoro model files...")
 try:
+    # kokoro-onnx <0.4: no-arg constructor auto-downloads
     Kokoro()
-    print("Kokoro TTS model ready.")
+    print("Kokoro TTS ready (legacy API).")
 except TypeError:
-    print("kokoro-onnx API changed -- model will auto-download on first TTS request.")
+    # kokoro-onnx >=0.4: explicit paths required
+    cache = os.path.expanduser("~/.cache/kokoro")
+    os.makedirs(cache, exist_ok=True)
+    model = os.path.join(cache, "kokoro-v0_19.onnx")
+    voices = os.path.join(cache, "voices.bin")
+    base = "https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files"
+    if not os.path.exists(model):
+        print("Downloading kokoro model (~80MB)...")
+        urllib.request.urlretrieve(f"{base}/kokoro-v0_19.onnx", model)
+    if not os.path.exists(voices):
+        print("Downloading voices (~230MB)...")
+        urllib.request.urlretrieve(f"{base}/voices.bin", voices)
+    Kokoro(model, voices)
+    print("Kokoro TTS ready (new API).")
 except Exception as e:
-    print(f"Warning: {e}")
+    print(f"Warning: {e} -- TTS will attempt download on first request.")
 PYEOF
 success "Voice model ready."
 
