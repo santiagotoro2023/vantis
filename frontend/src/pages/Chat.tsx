@@ -106,11 +106,17 @@ export default function Chat() {
   const [listening, setListening] = useState(false)
   const [uploading, setUploading] = useState(false)
   const [recallResults, setRecallResults] = useState<Array<{ id: string; type: string; label: string }> | null>(null)
+  const [msgSearch, setMsgSearch] = useState('')
+  const [showMsgSearch, setShowMsgSearch] = useState(false)
+  const [typingUsers, setTypingUsers] = useState<string[]>([])
+  const [voiceMode, setVoiceMode] = useState(false)
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const renameInputRef = useRef<HTMLInputElement>(null)
   const abortRef = useRef<AbortController | null>(null)
   const recognitionRef = useRef<any>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
+  const voiceModeRef = useRef(false)
+  const typingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   // Sentence-level TTS queue for parallel streaming playback
   const ttsBufferRef = useRef('')
   const ttsQueueRef = useRef<HTMLAudioElement[]>([])
@@ -167,11 +173,18 @@ export default function Chat() {
     return () => clearTimeout(t)
   }, [input])
 
+  useEffect(() => { voiceModeRef.current = voiceMode }, [voiceMode])
+
   const handleWs = useCallback((msg: WsMessage) => {
     if (msg.type === 'emotion_update') {
       const em = msg.data as Partial<EmotionState>
       setEmotions(em)
       setEmotionHistory(prev => [...prev.slice(-19), { timestamp: new Date().toISOString(), emotions: em }])
+    }
+    if (msg.type === 'typing') {
+      const d = msg.data as { user: string }
+      setTypingUsers(prev => prev.includes(d.user) ? prev : [...prev, d.user])
+      setTimeout(() => setTypingUsers(prev => prev.filter(u => u !== d.user)), 3000)
     }
   }, [])
 
@@ -334,7 +347,7 @@ export default function Chat() {
     setRenamingId(null)
   }
 
-  const startListening = () => {
+  const startListening = useCallback(() => {
     const SR = window.SpeechRecognition || window.webkitSpeechRecognition
     if (!SR) return
     const recognition = new SR()
@@ -342,14 +355,76 @@ export default function Chat() {
     recognition.interimResults = false
     recognition.lang = 'en-US'
     recognition.onresult = (e: any) => {
-      setInput(prev => prev + e.results[0][0].transcript)
+      const transcript: string = e.results[0][0].transcript
       setListening(false)
+      if (voiceModeRef.current) {
+        setInput('')
+        setMessages(prev => [...prev, { role: 'user', content: transcript, timestamp: new Date().toISOString() }])
+        setMessages(prev => [...prev, { role: 'assistant', content: '', timestamp: new Date().toISOString(), streaming: true }])
+        setLoading(true)
+        ttsBufferRef.current = ''
+        abortRef.current = api.streamMessage(
+          transcript,
+          sessionId,
+          modelOverride === 'primary' ? undefined : modelOverride,
+          (token) => {
+            setMessages(prev => {
+              const updated = [...prev]
+              const last = updated[updated.length - 1]
+              if (last.role === 'assistant') updated[updated.length - 1] = { ...last, content: last.content + token }
+              return updated
+            })
+            setLoading(false)
+            ttsBufferRef.current += token
+            const match = ttsBufferRef.current.match(/^(.*?[.!?])(\s|$)/s)
+            if (match && match[1].length >= 8) {
+              const sentence = match[1]
+              ttsBufferRef.current = ttsBufferRef.current.slice(sentence.length).trimStart()
+              enqueueTTS(sentence)
+            }
+          },
+          (fullText, sid) => {
+            setSessionId(sid || sessionId)
+            setMessages(prev => {
+              const updated = [...prev]
+              const last = updated[updated.length - 1]
+              if (last.role === 'assistant') updated[updated.length - 1] = { ...last, content: fullText, streaming: false }
+              return updated
+            })
+            setLoading(false)
+            loadSessions()
+            if (ttsBufferRef.current.trim()) { enqueueTTS(ttsBufferRef.current.trim()); ttsBufferRef.current = '' }
+            if (voiceModeRef.current) setTimeout(startListening, 1200)
+          },
+          () => { setLoading(false) },
+        )
+      } else {
+        setInput(prev => prev + transcript)
+      }
     }
     recognition.onerror = () => setListening(false)
     recognition.onend = () => setListening(false)
     recognition.start()
     recognitionRef.current = recognition
     setListening(true)
+  }, [sessionId, modelOverride, enqueueTTS, loadSessions])
+
+  const forkSession = async (messageIndex: number) => {
+    if (!sessionId) return
+    try {
+      const result = await api.forkSession(sessionId, messageIndex)
+      await loadSessions()
+      await loadSession(result.session_id)
+    } catch { /* ignore */ }
+  }
+
+  const handleInputChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
+    setInput(e.target.value)
+    if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current)
+    if (e.target.value.trim() && sessionId) {
+      api.notifyTyping().catch(() => {})
+      typingTimeoutRef.current = setTimeout(() => {}, 3000)
+    }
   }
 
   const handleFileUpload = async (file: File) => {
@@ -592,6 +667,24 @@ export default function Chat() {
             >
               {ttsEnabled ? <Volume2 size={12} /> : <VolumeX size={12} />}
             </button>
+            {/* Message search toggle */}
+            <button
+              onClick={() => { setShowMsgSearch(v => !v); setMsgSearch('') }}
+              className={`text-xs font-mono px-2 py-1 border transition-colors ${showMsgSearch ? 'border-accent text-accent' : 'border-border text-muted hover:text-text'}`}
+              title="Search messages"
+            >
+              <Search size={12} />
+            </button>
+            {/* V2V toggle */}
+            {hasSpeechRecognition && (
+              <button
+                onClick={() => setVoiceMode(v => !v)}
+                className={`text-[10px] font-mono px-2 py-1 border transition-colors ${voiceMode ? 'border-red-500/60 text-red-400 bg-red-500/10' : 'border-border text-muted hover:text-text'}`}
+                title={voiceMode ? 'Voice-to-voice ON (click to disable)' : 'Enable voice-to-voice mode'}
+              >
+                V2V
+              </button>
+            )}
             {/* Model toggle */}
             <div className="flex items-center border border-border overflow-hidden text-[10px] font-mono">
               <button
@@ -611,6 +704,24 @@ export default function Chat() {
             </div>
           </div>
         </div>
+        {showMsgSearch && (
+          <div className="border-b border-border px-4 py-2 bg-panel flex items-center gap-2 shrink-0">
+            <Search size={11} className="text-muted shrink-0" />
+            <input
+              type="text"
+              value={msgSearch}
+              onChange={e => setMsgSearch(e.target.value)}
+              placeholder="Filter current session messages..."
+              className="flex-1 bg-transparent text-xs font-mono text-text placeholder-muted/40 outline-none"
+              autoFocus
+            />
+            {msgSearch && (
+              <button onClick={() => setMsgSearch('')} className="text-muted hover:text-text">
+                <X size={11} />
+              </button>
+            )}
+          </div>
+        )}
 
         <div className="flex-1 overflow-y-auto p-4 space-y-4">
           {messages.length === 0 && (
@@ -620,8 +731,8 @@ export default function Chat() {
               <div className="text-xs mt-1">Type something. I will respond with appropriate indifference.</div>
             </div>
           )}
-          {messages.map((msg, i) => (
-            <div key={i} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+          {(msgSearch.trim() ? messages.filter(m => m.content.toLowerCase().includes(msgSearch.toLowerCase())) : messages).map((msg, i) => (
+            <div key={i} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'} group`}>
               <div
                 className={`max-w-2xl rounded-lg px-4 py-3 text-sm leading-relaxed ${
                   msg.role === 'user'
@@ -664,12 +775,31 @@ export default function Chat() {
                 ) : (
                   <div className="whitespace-pre-wrap">{msg.content}</div>
                 )}
-                <div className="text-xs text-muted mt-1.5">
-                  {new Date(parseUTC(msg.timestamp)).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false })}
+                <div className="flex items-center justify-between mt-1.5">
+                  <span
+                    className="text-[9px] text-muted/60 font-mono cursor-default"
+                    title={new Date(parseUTC(msg.timestamp)).toLocaleString()}
+                  >
+                    {timeAgo(msg.timestamp)}
+                  </span>
+                  <button
+                    onClick={() => forkSession(i)}
+                    className="text-[9px] font-mono text-muted/30 hover:text-accent opacity-0 group-hover:opacity-100 transition-all px-1 ml-2"
+                    title="Fork conversation from this message"
+                  >
+                    ⑂
+                  </button>
                 </div>
               </div>
             </div>
           ))}
+          {typingUsers.length > 0 && (
+            <div className="flex justify-start">
+              <div className="text-[10px] font-mono text-muted/60 bg-panel border border-border rounded px-3 py-1.5 italic">
+                {typingUsers.join(', ')} {typingUsers.length === 1 ? 'is' : 'are'} typing...
+              </div>
+            </div>
+          )}
           <div ref={messagesEndRef} />
         </div>
 
@@ -700,7 +830,7 @@ export default function Chat() {
           <input
             ref={fileInputRef}
             type="file"
-            accept=".txt,.md,.pdf,.py,.js,.ts,.json"
+            accept=".txt,.md,.pdf,.py,.js,.ts,.json,.png,.jpg,.jpeg,.gif,.webp"
             className="hidden"
             onChange={e => {
               const file = e.target.files?.[0]
@@ -711,7 +841,7 @@ export default function Chat() {
           <div className="flex gap-2">
             <textarea
               value={input}
-              onChange={e => setInput(e.target.value)}
+              onChange={handleInputChange}
               onKeyDown={handleKey}
               placeholder="Speak. I am listening."
               rows={1}

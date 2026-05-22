@@ -2,8 +2,9 @@ import asyncio
 import json
 import uuid
 import logging
+from datetime import datetime as _dt
 from pydantic import BaseModel
-from typing import Literal
+from typing import Literal, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse, PlainTextResponse
@@ -20,6 +21,41 @@ from personality import personality_manager
 
 router = APIRouter(prefix="/api/chat", tags=["chat"])
 logger = logging.getLogger(__name__)
+
+
+async def _auto_name_session(session_id: str, owner: str) -> None:
+    """Auto-generate a session name after enough messages if not already named."""
+    try:
+        async with get_db() as db:
+            cur = await db.execute("SELECT name FROM conversation_sessions WHERE session_id = ?", (session_id,))
+            row = await cur.fetchone()
+            if row and row["name"]:
+                return
+            cur = await db.execute("SELECT COUNT(*) as cnt FROM conversations WHERE session_id = ?", (session_id,))
+            cnt_row = await cur.fetchone()
+            if not cnt_row or cnt_row["cnt"] < 4:
+                return
+            cur = await db.execute(
+                "SELECT role, content FROM conversations WHERE session_id = ? ORDER BY timestamp ASC LIMIT 4",
+                (session_id,)
+            )
+            rows = await cur.fetchall()
+        context = "\n".join(f"{r['role']}: {r['content'][:100]}" for r in rows)
+        title = await ollama.chat(
+            [{"role": "user", "content": f"Write a 3-5 word title for this conversation (no quotes, no punctuation):\n\n{context}"}],
+            system="You are a title generator. Reply with only a 3-5 word title. No quotes. No punctuation. No explanation.",
+        )
+        title = title.strip().strip('"\'').strip()[:60]
+        if title:
+            async with get_db() as db:
+                await db.execute(
+                    "INSERT INTO conversation_sessions (session_id, name, owner) VALUES (?, ?, ?) "
+                    "ON CONFLICT(session_id) DO UPDATE SET name = excluded.name WHERE name IS NULL",
+                    (session_id, title, owner)
+                )
+                await db.commit()
+    except Exception as exc:
+        logger.debug("Auto-name session failed: %s", exc)
 
 # Patterns that indicate the primary model refused the request
 _REFUSAL_PATTERNS = [
@@ -124,6 +160,25 @@ async def send_message(msg: ChatMessage, user: dict = Depends(get_current_user))
     except Exception as exc:
         logger.debug("Semantic memory injection failed: %s", exc)
 
+    # Inject current date/time
+    full_system = f"CURRENT DATE/TIME: {_dt.now().strftime('%A, %Y-%m-%d %H:%M')}\n\n" + full_system
+
+    # Inject upcoming calendar events
+    try:
+        async with get_db() as db:
+            cur = await db.execute(
+                "SELECT title, description, event_time FROM calendar_events "
+                "WHERE owner = ? AND event_time >= datetime('now') "
+                "AND event_time <= datetime('now', '+48 hours') ORDER BY event_time ASC LIMIT 5",
+                (user["username"],)
+            )
+            cal_rows = await cur.fetchall()
+        if cal_rows:
+            cal_ctx = "\n".join(f"- {r['title']} at {r['event_time']}" + (f": {r['description']}" if r['description'] else "") for r in cal_rows)
+            full_system = full_system + f"\n\nUPCOMING EVENTS (next 48h):\n{cal_ctx}"
+    except Exception:
+        pass
+
     model_used = "primary"
 
     if msg.model == "omega":
@@ -179,6 +234,8 @@ async def send_message(msg: ChatMessage, user: dict = Depends(get_current_user))
         asyncio.create_task(
             memory_manager.store_correction(msg.content, response_text, emotion_manager.to_dict(), owner=user["username"])
         )
+
+    asyncio.create_task(_auto_name_session(session_id, user["username"]))
 
     return {
         "response": response_text,
@@ -348,6 +405,25 @@ async def stream_message(msg: ChatMessage, user: dict = Depends(get_current_user
     except Exception as exc:
         logger.debug("Semantic memory injection failed: %s", exc)
 
+    # Inject current date/time
+    full_system = f"CURRENT DATE/TIME: {_dt.now().strftime('%A, %Y-%m-%d %H:%M')}\n\n" + full_system
+
+    # Inject upcoming calendar events
+    try:
+        async with get_db() as db:
+            cur = await db.execute(
+                "SELECT title, description, event_time FROM calendar_events "
+                "WHERE owner = ? AND event_time >= datetime('now') "
+                "AND event_time <= datetime('now', '+48 hours') ORDER BY event_time ASC LIMIT 5",
+                (user["username"],)
+            )
+            cal_rows = await cur.fetchall()
+        if cal_rows:
+            cal_ctx = "\n".join(f"- {r['title']} at {r['event_time']}" + (f": {r['description']}" if r['description'] else "") for r in cal_rows)
+            full_system = full_system + f"\n\nUPCOMING EVENTS (next 48h):\n{cal_ctx}"
+    except Exception:
+        pass
+
     async def generate():
         full_text = ""
         stream_error: str | None = None
@@ -396,6 +472,8 @@ async def stream_message(msg: ChatMessage, user: dict = Depends(get_current_user
                 memory_manager.store_correction(msg.content, full_text, emotion_manager.to_dict(), owner=user["username"])
             )
 
+        asyncio.create_task(_auto_name_session(session_id, user["username"]))
+
     return StreamingResponse(
         generate(),
         media_type="text/event-stream",
@@ -438,6 +516,49 @@ async def export_session(session_id: str, user: dict = Depends(get_current_user)
         headers={"Content-Disposition": f'attachment; filename="{session_name}.md"'},
         media_type="text/markdown",
     )
+
+
+@router.post("/typing")
+async def user_typing(user: dict = Depends(get_current_user)):
+    """Broadcast that a user is typing."""
+    from websocket_manager import ws_manager
+    await ws_manager.broadcast({"type": "typing", "data": {"user": user["username"]}})
+    return {"ok": True}
+
+
+class ForkRequest(BaseModel):
+    message_index: int
+
+
+@router.post("/sessions/{session_id}/fork")
+async def fork_session(session_id: str, data: ForkRequest, user: dict = Depends(get_current_user)):
+    """Fork a conversation at a given message index."""
+    async with get_db() as db:
+        cursor = await db.execute(
+            "SELECT role, content, timestamp FROM conversations "
+            "WHERE session_id = ? ORDER BY timestamp ASC",
+            (session_id,)
+        )
+        rows = await cursor.fetchall()
+    if data.message_index < 0 or data.message_index >= len(rows):
+        raise HTTPException(400, "Message index out of range.")
+    fork_rows = rows[:data.message_index + 1]
+    new_session_id = str(uuid.uuid4())
+    async with get_db() as db:
+        for row in fork_rows:
+            await db.execute(
+                "INSERT INTO conversations (session_id, role, content, timestamp) VALUES (?, ?, ?, ?)",
+                (new_session_id, row["role"], row["content"], row["timestamp"])
+            )
+        cur = await db.execute("SELECT name FROM conversation_sessions WHERE session_id = ?", (session_id,))
+        orig = await cur.fetchone()
+        orig_name = ((orig["name"] if orig and orig["name"] else None) or f"Session {session_id[:6]}") + " (fork)"
+        await db.execute(
+            "INSERT INTO conversation_sessions (session_id, name, owner) VALUES (?, ?, ?)",
+            (new_session_id, orig_name, user["username"])
+        )
+        await db.commit()
+    return {"session_id": new_session_id, "messages_copied": len(fork_rows), "name": orig_name}
 
 
 @router.post("/end-session")

@@ -71,6 +71,6 @@ export interface User {
 }
 
 export interface WsMessage {
-  type: 'thought' | 'emotion_update' | 'goal_update' | 'sandbox_result' | 'evolution_proposal' | 'notification' | 'pong'
+  type: 'thought' | 'emotion_update' | 'goal_update' | 'sandbox_result' | 'evolution_proposal' | 'notification' | 'pong' | 'typing' | 'user_thought'
   data: unknown
 }

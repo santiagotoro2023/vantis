@@ -29,6 +29,7 @@ from routes.skills_routes import router as skills_router
 from routes.update_routes import router as update_router
 from routes.tts_routes import router as tts_router
 from routes.memory_routes import router as memory_router
+from routes.calendar_routes import router as calendar_router
 
 logging.basicConfig(
     level=logging.INFO,
@@ -136,6 +137,7 @@ app.include_router(skills_router)
 app.include_router(update_router)
 app.include_router(tts_router)
 app.include_router(memory_router)
+app.include_router(calendar_router)
 
 
 # ---------------------------------------------------------------------------

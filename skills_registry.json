@@ -1,0 +1,95 @@
+{
+  "version": "1.0",
+  "skills": [
+    {
+      "id": "weather",
+      "name": "weather",
+      "category": "utilities",
+      "description": "Fetch current weather for any city using wttr.in (no API key needed).",
+      "trigger_conditions": "weather, temperature, forecast, rain, sun, humidity, what is the weather",
+      "author": "vantis-marketplace",
+      "code": "import sys, urllib.request, json\ncity = ' '.join(sys.argv[1:]) if len(sys.argv) > 1 else 'London'\nurl = f'https://wttr.in/{city.replace(\" \", \"+\")}?format=j1'\ntry:\n    with urllib.request.urlopen(url, timeout=10) as r:\n        data = json.load(r)\n    cur = data['current_condition'][0]\n    print(json.dumps({\n        'city': city,\n        'temp_c': cur['temp_C'],\n        'feels_like_c': cur['FeelsLikeC'],\n        'desc': cur['weatherDesc'][0]['value'],\n        'humidity': cur['humidity'],\n        'wind_kmph': cur['windspeedKmph'],\n    }))\nexcept Exception as e:\n    print(json.dumps({'error': str(e)}))"
+    },
+    {
+      "id": "crypto_prices",
+      "name": "crypto_prices",
+      "category": "finance",
+      "description": "Fetch current cryptocurrency prices from CoinGecko (no API key needed).",
+      "trigger_conditions": "crypto, bitcoin, ethereum, price, BTC, ETH, coin, token",
+      "author": "vantis-marketplace",
+      "code": "import sys, urllib.request, json\ncoins = sys.argv[1:] if len(sys.argv) > 1 else ['bitcoin', 'ethereum', 'solana']\nids = ','.join(coins)\nurl = f'https://api.coingecko.com/api/v3/simple/price?ids={ids}&vs_currencies=usd&include_24hr_change=true'\ntry:\n    req = urllib.request.Request(url, headers={'User-Agent': 'VANTIS/1.0'})\n    with urllib.request.urlopen(req, timeout=10) as r:\n        data = json.load(r)\n    out = {}\n    for c, v in data.items():\n        out[c] = {'usd': v.get('usd'), 'change_24h': round(v.get('usd_24h_change', 0), 2)}\n    print(json.dumps(out))\nexcept Exception as e:\n    print(json.dumps({'error': str(e)}))"
+    },
+    {
+      "id": "system_monitor",
+      "name": "system_monitor",
+      "category": "system",
+      "description": "Report CPU, memory, disk, and top processes from the host system.",
+      "trigger_conditions": "system, cpu, memory, ram, disk, processes, resources, usage, load",
+      "author": "vantis-marketplace",
+      "code": "import json, subprocess, sys\n\ndef run(cmd):\n    try:\n        return subprocess.check_output(cmd, shell=True, text=True, timeout=5).strip()\n    except Exception:\n        return ''\n\nresult = {}\n\n# CPU\ncpu = run(\"grep 'cpu ' /proc/stat\")\nif cpu:\n    parts = cpu.split()[1:]\n    idle = int(parts[3])\n    total = sum(int(x) for x in parts)\n    result['cpu_pct'] = round((1 - idle / total) * 100, 1) if total else 0\n\n# Memory\nmem = run('free -m')\nif mem:\n    for line in mem.splitlines():\n        if line.startswith('Mem:'):\n            p = line.split()\n            result['mem_total_mb'] = int(p[1])\n            result['mem_used_mb'] = int(p[2])\n            result['mem_free_mb'] = int(p[3])\n\n# Disk\ndf = run('df -h /')\nif df:\n    lines = df.strip().splitlines()\n    if len(lines) > 1:\n        p = lines[1].split()\n        result['disk'] = {'total': p[1], 'used': p[2], 'free': p[3], 'pct': p[4]}\n\n# Top 5 processes by memory\nps = run(\"ps aux --no-header --sort=-%mem | head -5 | awk '{print $11, $3, $4}'\")\nif ps:\n    result['top_procs'] = [{'cmd': l.split()[0], 'cpu': l.split()[1], 'mem': l.split()[2]} for l in ps.splitlines() if l.split()]\n\nprint(json.dumps(result))"
+    },
+    {
+      "id": "web_scraper",
+      "name": "web_scraper",
+      "category": "utilities",
+      "description": "Fetch and extract plain text from any public URL.",
+      "trigger_conditions": "scrape, fetch page, read url, get content from, extract text from website",
+      "author": "vantis-marketplace",
+      "code": "import sys, urllib.request, re, json\nurl = sys.argv[1] if len(sys.argv) > 1 else 'https://example.com'\ntry:\n    req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0 VANTIS/1.0'})\n    with urllib.request.urlopen(req, timeout=15) as r:\n        html = r.read().decode(errors='replace')\n    # Strip scripts/styles/tags\n    html = re.sub(r'<(script|style)[^>]*>.*?</\\1>', '', html, flags=re.DOTALL|re.IGNORECASE)\n    text = re.sub(r'<[^>]+>', ' ', html)\n    text = re.sub(r'\\s+', ' ', text).strip()[:4000]\n    print(json.dumps({'url': url, 'text': text}))\nexcept Exception as e:\n    print(json.dumps({'error': str(e)}))"
+    },
+    {
+      "id": "rss_reader",
+      "name": "rss_reader",
+      "category": "utilities",
+      "description": "Fetch and parse an RSS/Atom feed, returning latest 10 items.",
+      "trigger_conditions": "rss, feed, news, articles, headlines, blog posts",
+      "author": "vantis-marketplace",
+      "code": "import sys, urllib.request, re, json\nurl = sys.argv[1] if len(sys.argv) > 1 else 'https://hnrss.org/frontpage'\ntry:\n    req = urllib.request.Request(url, headers={'User-Agent': 'VANTIS/1.0'})\n    with urllib.request.urlopen(req, timeout=10) as r:\n        xml = r.read().decode(errors='replace')\n    items = []\n    for item in re.findall(r'<item>(.*?)</item>', xml, re.DOTALL)[:10]:\n        title = re.search(r'<title[^>]*><!\\[CDATA\\[(.+?)\\]\\]>', item) or re.search(r'<title[^>]*>([^<]+)<', item)\n        link = re.search(r'<link[^>]*>([^<]+)<', item)\n        desc = re.search(r'<description[^>]*><!\\[CDATA\\[(.+?)\\]\\]>', item, re.DOTALL) or re.search(r'<description[^>]*>([^<]+)<', item, re.DOTALL)\n        items.append({\n            'title': title.group(1).strip() if title else '',\n            'link': link.group(1).strip() if link else '',\n            'desc': re.sub(r'<[^>]+>', '', desc.group(1)).strip()[:300] if desc else ''\n        })\n    print(json.dumps({'feed': url, 'items': items}))\nexcept Exception as e:\n    print(json.dumps({'error': str(e)}))"
+    },
+    {
+      "id": "git_status",
+      "name": "git_status",
+      "category": "development",
+      "description": "Show git status, recent commits, and branch info for a repository path.",
+      "trigger_conditions": "git, repository, commits, branch, status, changes, diff",
+      "author": "vantis-marketplace",
+      "code": "import sys, subprocess, json, os\npath = sys.argv[1] if len(sys.argv) > 1 else os.getcwd()\ndef git(args):\n    try:\n        return subprocess.check_output(['git', '-C', path] + args, text=True, timeout=10, stderr=subprocess.DEVNULL).strip()\n    except Exception:\n        return ''\nresult = {\n    'branch': git(['rev-parse', '--abbrev-ref', 'HEAD']),\n    'status': git(['status', '--short']),\n    'log': git(['log', '--oneline', '-10']),\n    'remotes': git(['remote', '-v']),\n}\nprint(json.dumps(result))"
+    },
+    {
+      "id": "github_repo_info",
+      "name": "github_repo_info",
+      "category": "development",
+      "description": "Fetch public GitHub repository info, issues, and recent commits via GitHub API.",
+      "trigger_conditions": "github, repo, repository info, issues, pull requests, stars, forks",
+      "author": "vantis-marketplace",
+      "code": "import sys, urllib.request, json, os\nrepo = sys.argv[1] if len(sys.argv) > 1 else 'torvalds/linux'\ntoken = os.environ.get('GITHUB_TOKEN', '')\nheaders = {'User-Agent': 'VANTIS/1.0', 'Accept': 'application/vnd.github.v3+json'}\nif token:\n    headers['Authorization'] = f'Bearer {token}'\ndef gh(endpoint):\n    try:\n        req = urllib.request.Request(f'https://api.github.com{endpoint}', headers=headers)\n        with urllib.request.urlopen(req, timeout=10) as r:\n            return json.load(r)\n    except Exception as e:\n        return {'error': str(e)}\ninfo = gh(f'/repos/{repo}')\ncommits = gh(f'/repos/{repo}/commits?per_page=5')\nresult = {\n    'repo': repo,\n    'description': info.get('description'),\n    'stars': info.get('stargazers_count'),\n    'forks': info.get('forks_count'),\n    'open_issues': info.get('open_issues_count'),\n    'language': info.get('language'),\n    'recent_commits': [{'sha': c.get('sha','')[:7], 'msg': c.get('commit',{}).get('message','').splitlines()[0]} for c in (commits if isinstance(commits, list) else [])][:5]\n}\nprint(json.dumps(result))"
+    },
+    {
+      "id": "docker_monitor",
+      "name": "docker_monitor",
+      "category": "system",
+      "description": "List running Docker containers and their resource usage.",
+      "trigger_conditions": "docker, containers, running containers, docker ps, container status",
+      "author": "vantis-marketplace",
+      "code": "import subprocess, json\ndef run(cmd):\n    try:\n        return subprocess.check_output(cmd, shell=True, text=True, timeout=10, stderr=subprocess.DEVNULL).strip()\n    except Exception:\n        return ''\nps = run(\"docker ps --format '{{.ID}}\\t{{.Names}}\\t{{.Image}}\\t{{.Status}}\\t{{.Ports}}'\")\nif not ps:\n    print(json.dumps({'error': 'Docker not available or no containers running'}))\nelse:\n    containers = []\n    for line in ps.splitlines():\n        parts = line.split('\\t')\n        containers.append({'id': parts[0] if parts else '', 'name': parts[1] if len(parts)>1 else '', 'image': parts[2] if len(parts)>2 else '', 'status': parts[3] if len(parts)>3 else '', 'ports': parts[4] if len(parts)>4 else ''})\n    print(json.dumps({'containers': containers, 'count': len(containers)}))"
+    },
+    {
+      "id": "url_health_check",
+      "name": "url_health_check",
+      "category": "utilities",
+      "description": "Check HTTP status codes and response times for one or more URLs.",
+      "trigger_conditions": "health check, is it up, url check, http status, ping website, site down",
+      "author": "vantis-marketplace",
+      "code": "import sys, urllib.request, time, json\nurls = sys.argv[1:] if len(sys.argv) > 1 else ['https://google.com']\nresults = []\nfor url in urls:\n    start = time.monotonic()\n    try:\n        req = urllib.request.Request(url, headers={'User-Agent': 'VANTIS/1.0'})\n        with urllib.request.urlopen(req, timeout=10) as r:\n            status = r.status\n            ms = round((time.monotonic() - start) * 1000)\n            results.append({'url': url, 'status': status, 'ms': ms, 'ok': 200 <= status < 400})\n    except Exception as e:\n        ms = round((time.monotonic() - start) * 1000)\n        results.append({'url': url, 'status': None, 'ms': ms, 'ok': False, 'error': str(e)})\nprint(json.dumps({'checks': results}))"
+    },
+    {
+      "id": "notes_manager",
+      "name": "notes_manager",
+      "category": "utilities",
+      "description": "Simple persistent note-taking: add, list, or search notes stored in a local JSON file.",
+      "trigger_conditions": "note, notes, reminder, write down, remember this, save note, list notes",
+      "author": "vantis-marketplace",
+      "code": "import sys, json, os, datetime\npath = os.path.expanduser('~/.vantis_notes.json')\ndef load():\n    if os.path.exists(path):\n        with open(path) as f: return json.load(f)\n    return []\ndef save(notes):\n    with open(path, 'w') as f: json.dump(notes, f)\nnotes = load()\ncmd = sys.argv[1] if len(sys.argv) > 1 else 'list'\nif cmd == 'add':\n    text = ' '.join(sys.argv[2:])\n    notes.append({'id': len(notes)+1, 'text': text, 'at': datetime.datetime.now().isoformat()})\n    save(notes)\n    print(json.dumps({'added': text, 'total': len(notes)}))\nelif cmd == 'search':\n    q = ' '.join(sys.argv[2:]).lower()\n    found = [n for n in notes if q in n['text'].lower()]\n    print(json.dumps({'results': found}))\nelif cmd == 'clear':\n    save([])\n    print(json.dumps({'cleared': True}))\nelse:\n    print(json.dumps({'notes': notes[-20:]}))"
+    }
+  ]
+}

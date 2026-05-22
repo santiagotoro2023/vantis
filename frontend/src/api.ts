@@ -169,6 +169,11 @@ export const api = {
   executeSkill: (id: number, args: string[] = []) =>
     request(`/skills/${id}/execute`, { method: 'POST', body: JSON.stringify({ args }) }),
 
+  getMarketplace: () => request<{ version: string; skills: Array<{ id: string; name: string; category: string; description: string; trigger_conditions: string; author: string; installed: boolean }> }>('/skills/marketplace'),
+
+  installMarketplaceSkill: (skillId: string) =>
+    request<{ id: number; status: string }>('/skills/marketplace/install', { method: 'POST', body: JSON.stringify({ skill_id: skillId }) }),
+
   streamMessage: (
     content: string,
     sessionId?: string,
@@ -219,7 +224,37 @@ export const api = {
     return ctrl
   },
 
+  // Typing indicator
+  notifyTyping: () => request('/chat/typing', { method: 'POST' }),
+
+  // Conversation fork
+  forkSession: (sessionId: string, messageIndex: number) =>
+    request<{ session_id: string; name: string; messages_copied: number }>(
+      `/chat/sessions/${sessionId}/fork`,
+      { method: 'POST', body: JSON.stringify({ message_index: messageIndex }) }
+    ),
+
+  // Emotion history
+  getEmotionHistory: (hours = 24) =>
+    request<Array<{ timestamp: string; emotions: Record<string, number> }>>(`/brain/emotion-history?hours=${hours}`),
+
+  // Calendar
+  getCalendarEvents: () =>
+    request<Array<{ id: number; title: string; description: string; event_time: string; reminder_minutes: number; reminded: number }>>('/calendar/events'),
+  createCalendarEvent: (data: { title: string; description: string; event_time: string; reminder_minutes: number }) =>
+    request<{ id: number; status: string }>('/calendar/events', { method: 'POST', body: JSON.stringify(data) }),
+  updateCalendarEvent: (id: number, data: Record<string, unknown>) =>
+    request(`/calendar/events/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+  deleteCalendarEvent: (id: number) =>
+    request(`/calendar/events/${id}`, { method: 'DELETE' }),
+
+  // Goal reminder
+  setGoalReminder: (id: number, notifyAt: string, notifyMessage: string) =>
+    request(`/goals/${id}/reminder`, { method: 'PUT', body: JSON.stringify({ notify_at: notifyAt, notify_message: notifyMessage }) }),
+
   decomposeGoal: (id: number) => request(`/goals/${id}/decompose`, { method: 'POST' }),
+
+  runGoalAgent: (id: number) => request(`/goals/${id}/run-agent`, { method: 'POST' }),
 
   shareMemory: (id: number, shared: boolean) =>
     request<{ shared: boolean }>(`/brain/memories/${id}/share`, { method: 'PUT' }),

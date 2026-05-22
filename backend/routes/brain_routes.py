@@ -116,6 +116,29 @@ async def get_emotions(user: dict = Depends(get_current_user)):
     return emotion_manager.to_dict()
 
 
+@router.get("/emotion-history")
+async def get_emotion_history(hours: int = 24, user: dict = Depends(get_current_user)):
+    """Return emotion snapshots from recent thoughts for charting."""
+    async with get_db() as db:
+        cursor = await db.execute(
+            "SELECT emotion_state, created_at FROM thoughts "
+            "WHERE emotion_state IS NOT NULL AND created_at >= datetime('now', ? || ' hours') "
+            "AND (owner = 'system' OR owner = ?) "
+            "ORDER BY created_at ASC LIMIT 100",
+            (f"-{hours}", user["username"])
+        )
+        rows = await cursor.fetchall()
+    result = []
+    for r in rows:
+        try:
+            emotions = json.loads(r["emotion_state"]) if r["emotion_state"] else {}
+            if emotions:
+                result.append({"timestamp": r["created_at"], "emotions": emotions})
+        except Exception:
+            pass
+    return result
+
+
 class EdgeCreate(BaseModel):
     source_type: str
     source_id: int

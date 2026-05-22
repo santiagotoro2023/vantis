@@ -174,6 +174,19 @@ async def init_db() -> None:
             )
         """)
 
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS calendar_events (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                title TEXT NOT NULL,
+                description TEXT NOT NULL DEFAULT '',
+                event_time TEXT NOT NULL,
+                reminder_minutes INTEGER NOT NULL DEFAULT 15,
+                owner TEXT NOT NULL,
+                reminded INTEGER NOT NULL DEFAULT 0,
+                created_at TEXT NOT NULL DEFAULT (datetime('now'))
+            )
+        """)
+
         await db.commit()
 
         # New tables: api_keys, audit_log
@@ -213,6 +226,8 @@ async def init_db() -> None:
         await _add_column_if_missing(db, "personality_versions", "owner", "TEXT NOT NULL DEFAULT 'system'")
         await _add_column_if_missing(db, "users", "totp_secret", "TEXT")
         await _add_column_if_missing(db, "users", "totp_enabled", "INTEGER NOT NULL DEFAULT 0")
+        await _add_column_if_missing(db, "goals", "notify_at", "TEXT")
+        await _add_column_if_missing(db, "goals", "notify_message", "TEXT")
 
         await db.commit()
 

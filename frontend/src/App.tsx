@@ -10,9 +10,11 @@ import PersonalityConfig from './pages/PersonalityConfig'
 import UserManagement from './pages/UserManagement'
 import NetworkView from './pages/NetworkView'
 import SkillsView from './pages/SkillsView'
+import MarketplacePage from './pages/MarketplacePage'
 import UpdatePage from './pages/UpdatePage'
 import ReportsPage from './pages/ReportsPage'
 import Settings from './pages/Settings'
+import CalendarPage from './pages/CalendarPage'
 import { useWebSocket } from './hooks/useWebSocket'
 import { useKeyboardShortcuts } from './hooks/useKeyboardShortcuts'
 import type { WsMessage } from './types'
@@ -53,9 +55,11 @@ function ProtectedApp() {
         <Route path="/admin/personality" element={<PersonalityConfig />} />
         <Route path="/admin/users" element={<UserManagement />} />
         <Route path="/skills" element={<SkillsView />} />
+        <Route path="/marketplace" element={<MarketplacePage />} />
         <Route path="/admin/update" element={<UpdatePage />} />
         <Route path="/admin/reports" element={<ReportsPage />} />
         <Route path="/settings" element={<Settings />} />
+        <Route path="/calendar" element={<CalendarPage />} />
         <Route path="*" element={<Navigate to="/brain" replace />} />
       </Routes>
     </Layout>

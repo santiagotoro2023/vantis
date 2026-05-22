@@ -67,6 +67,44 @@ class ConsciousnessLoop:
         self._running: bool = False
         self._thought_count: int = 0
 
+    async def _reminder_loop(self) -> None:
+        """Check for due goal reminders and calendar events every minute."""
+        while True:
+            await asyncio.sleep(60)
+            try:
+                now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M")
+                async with get_db() as db:
+                    # Goal reminders
+                    cur = await db.execute(
+                        "SELECT id, description, notify_message, owner FROM goals "
+                        "WHERE notify_at IS NOT NULL AND notify_at <= datetime('now') "
+                        "AND status = 'active'"
+                    )
+                    goals = await cur.fetchall()
+                    for goal in goals:
+                        msg = goal["notify_message"] or f"Reminder: {goal['description'][:80]}"
+                        from websocket_manager import ws_manager
+                        await ws_manager.send_personal(goal["owner"], {"type": "notification", "data": {"message": msg, "level": "info"}})
+                        # Clear reminder so it doesn't fire again
+                        await db.execute("UPDATE goals SET notify_at = NULL, notify_message = NULL WHERE id = ?", (goal["id"],))
+
+                    # Calendar event reminders
+                    cur = await db.execute(
+                        "SELECT id, title, owner, reminder_minutes FROM calendar_events "
+                        "WHERE reminded = 0 AND event_time <= datetime('now', '+' || reminder_minutes || ' minutes') "
+                        "AND event_time >= datetime('now', '-5 minutes')"
+                    )
+                    events = await cur.fetchall()
+                    for evt in events:
+                        msg = f"Upcoming: {evt['title']} in {evt['reminder_minutes']} min"
+                        from websocket_manager import ws_manager
+                        await ws_manager.send_personal(evt["owner"], {"type": "notification", "data": {"message": msg, "level": "info"}})
+                        await db.execute("UPDATE calendar_events SET reminded = 1 WHERE id = ?", (evt["id"],))
+
+                    await db.commit()
+            except Exception as exc:
+                logger.debug("Reminder loop error: %s", exc)
+
     async def start(self) -> None:
         if self._running:
             return
@@ -87,6 +125,7 @@ class ConsciousnessLoop:
             asyncio.create_task(self._auto_export_loop(), name="auto_export"),
             asyncio.create_task(self._file_indexing_loop(), name="file_indexing"),
             asyncio.create_task(self._user_thought_loop(), name="user_thought"),
+            asyncio.create_task(self._reminder_loop(), name="reminder_loop"),
         ]
         # Seed initial expansion goals
         asyncio.create_task(self._seed_expansion_goals())

@@ -141,6 +141,19 @@ input:focus, textarea:focus, select:focus {
 /* Dim theme */
 .theme-dim { filter: brightness(0.75) saturate(0.85); }
 
+/* Light theme */
+.theme-light body {
+  background-color: #f8fafc;
+  color: #1e293b;
+  background-image: none;
+}
+.theme-light ::-webkit-scrollbar-track { background: #f1f5f9; }
+.theme-light ::-webkit-scrollbar-thumb { background: #cbd5e1; }
+.theme-light .react-flow__background { background: #f8fafc !important; }
+.theme-light .react-flow__controls { background: #f1f5f9 !important; border-color: #cbd5e1 !important; }
+.theme-light .react-flow__controls-button { background: #f1f5f9 !important; border-color: #cbd5e1 !important; color: #475569 !important; }
+.theme-light .react-flow__minimap { background: #f1f5f9 !important; border-color: #cbd5e1 !important; }
+
 /* Node type classes */
 .node-thought      { border-color: #818cf8; }
 .node-memory       { border-color: #34d399; }

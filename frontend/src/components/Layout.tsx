@@ -1,6 +1,6 @@
 import { Link, useLocation, useNavigate } from 'react-router-dom'
 import { useState } from 'react'
-import { Brain, MessageSquare, Target, Settings, Users, Terminal, Activity, LogOut, Wifi, Zap, Download, FileText, Moon, Sun, SlidersHorizontal } from 'lucide-react'
+import { Brain, MessageSquare, Target, Settings, Users, Terminal, Activity, LogOut, Wifi, Zap, Download, FileText, Moon, Sun, SlidersHorizontal, Store, CalendarDays, Eye } from 'lucide-react'
 import clsx from 'clsx'
 import VantisLogo from './VantisLogo'
 import NotificationHistory from './NotificationHistory'
@@ -17,6 +17,8 @@ const NAV = [
   { to: '/monologue', icon: Activity, label: 'Monologue', key: 'M' },
   { to: '/goals', icon: Target, label: 'Goals', key: 'G' },
   { to: '/skills', icon: Zap, label: 'Skills', key: 'S' },
+  { to: '/marketplace', icon: Store, label: 'Marketplace', key: '' },
+  { to: '/calendar', icon: CalendarDays, label: 'Calendar', key: '' },
   { to: '/sandbox', icon: Terminal, label: 'Sandbox', key: '' },
 ]
 
@@ -40,18 +42,21 @@ const MOBILE_NAV = [
 export default function Layout({ children, role, notification }: Props) {
   const loc = useLocation()
   const navigate = useNavigate()
-  const [dim, setDim] = useState(() => localStorage.getItem('vantis_theme') === 'dim')
+  const [theme, setTheme] = useState<'dark' | 'dim' | 'light'>(() => (localStorage.getItem('vantis_theme') as 'dark' | 'dim' | 'light') || 'dark')
 
   const toggleTheme = () => {
-    const next = !dim
-    setDim(next)
-    document.documentElement.classList.toggle('theme-dim', next)
-    localStorage.setItem('vantis_theme', next ? 'dim' : 'dark')
+    const cycle: Record<string, 'dark' | 'dim' | 'light'> = { dark: 'dim', dim: 'light', light: 'dark' }
+    const next = cycle[theme] || 'dark'
+    setTheme(next)
+    document.documentElement.classList.remove('theme-dim', 'theme-light')
+    if (next !== 'dark') document.documentElement.classList.add(`theme-${next}`)
+    localStorage.setItem('vantis_theme', next)
   }
 
   // Apply saved theme on mount
   if (typeof document !== 'undefined') {
-    document.documentElement.classList.toggle('theme-dim', dim)
+    document.documentElement.classList.remove('theme-dim', 'theme-light')
+    if (theme !== 'dark') document.documentElement.classList.add(`theme-${theme}`)
   }
 
   const logout = () => {
@@ -128,10 +133,10 @@ export default function Layout({ children, role, notification }: Props) {
         <div className="mt-auto flex flex-col items-center">
           <button
             onClick={toggleTheme}
-            title={dim ? 'Switch to dark mode' : 'Switch to dim mode'}
+            title={`Theme: ${theme} → ${{dark:'dim',dim:'light',light:'dark'}[theme]}`}
             className="p-2.5 text-muted hover:text-accent transition-colors"
           >
-            {dim ? <Sun size={16} /> : <Moon size={16} />}
+            {theme === 'light' ? <Sun size={16} /> : theme === 'dim' ? <Eye size={16} /> : <Moon size={16} />}
           </button>
           <Link
             to="/settings"
